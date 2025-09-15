@@ -1,0 +1,200 @@
+# sigma=0.4, threshold=0.001
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.002
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.003
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.004
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.005
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.006
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.007
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.008
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.009
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.4, threshold=0.01
+Precision = 0.597781
+Recall = 0.671598
+AER = 0.378659
+
+# sigma=0.3, threshold=0.001
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.002
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.003
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.004
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.005
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.006
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.007
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.008
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.009
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.3, threshold=0.01
+Precision = 0.604716
+Recall = 0.680473
+AER = 0.371105
+
+# sigma=0.2, threshold=0.001
+Precision = 0.603329
+Recall = 0.674556
+AER = 0.373938
+
+# sigma=0.2, threshold=0.002
+Precision = 0.603329
+Recall = 0.674556
+AER = 0.373938
+
+# sigma=0.2, threshold=0.003
+Precision = 0.603329
+Recall = 0.674556
+AER = 0.373938
+
+# sigma=0.2, threshold=0.004
+Precision = 0.603329
+Recall = 0.674556
+AER = 0.373938
+
+# sigma=0.2, threshold=0.005
+Precision = 0.603329
+Recall = 0.674556
+AER = 0.373938
+
+# sigma=0.2, threshold=0.006
+Precision = 0.604167
+Recall = 0.674556
+AER = 0.373346
+
+# sigma=0.2, threshold=0.007
+Precision = 0.604167
+Recall = 0.674556
+AER = 0.373346
+
+# sigma=0.2, threshold=0.008
+Precision = 0.604167
+Recall = 0.674556
+AER = 0.373346
+
+# sigma=0.2, threshold=0.009
+Precision = 0.604167
+Recall = 0.674556
+AER = 0.373346
+
+# sigma=0.2, threshold=0.01
+Precision = 0.604167
+Recall = 0.674556
+AER = 0.373346
+
+# sigma=0.1, threshold=0.001
+Precision = 0.590846
+Recall = 0.615385
+AER = 0.401322
+
+# sigma=0.1, threshold=0.002
+Precision = 0.590846
+Recall = 0.615385
+AER = 0.401322
+
+# sigma=0.1, threshold=0.003
+Precision = 0.590846
+Recall = 0.615385
+AER = 0.401322
+
+# sigma=0.1, threshold=0.004
+Precision = 0.590278
+Recall = 0.615385
+AER = 0.401701
+
+# sigma=0.1, threshold=0.005
+Precision = 0.591099
+Recall = 0.615385
+AER = 0.401135
+
+# sigma=0.1, threshold=0.006
+Precision = 0.591099
+Recall = 0.615385
+AER = 0.401135
+
+# sigma=0.1, threshold=0.007
+Precision = 0.591099
+Recall = 0.615385
+AER = 0.401135
+
+# sigma=0.1, threshold=0.008
+Precision = 0.590529
+Recall = 0.612426
+AER = 0.402462
+
+# sigma=0.1, threshold=0.009
+Precision = 0.590529
+Recall = 0.612426
+AER = 0.402462
+
+# sigma=0.1, threshold=0.01
+Precision = 0.590529
+Recall = 0.612426
+AER = 0.402462
+
