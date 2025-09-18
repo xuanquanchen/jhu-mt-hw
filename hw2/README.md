@@ -74,24 +74,24 @@ All models follow the same command-line interface and output format for consiste
 
 ```bash
 # IBM Model 1
-python ibm1.py -n 1000 -i 5 > ibm1.a
+python ibm1.py -n 10000 -i 8 > ibm1.a
 
 # Diagonal Preference Model
-python diagonal.py -n 1000 -i 5 -s 1.0 > diagonal.a
+python diagonal.py -n 10000 -i 8 -s 1.0 > diagonal.a
 
 # Hybrid Model (recommended - best performance)
-python hybrid.py -n 1000 -i 8 -s 0.3 -t 0.01 > alignment
+python hybrid.py -n 10000 -i 8 -s 0.3 -t 0.01 > alignment
 ```
 
 ### Evaluating Alignments
 
 ```bash
-python score-alignments < alignment_file
+python score-alignments < alignment_file.a
 ```
 
 ```bash
 # To print out precision, recell, AER results (1000 lines alignment example)
-python align_file.py -n 1000| python score-alignments | tail -3
+python score-alignments < alignment_file | tail -3
 ```
 ### Checking Alignment Format
 
