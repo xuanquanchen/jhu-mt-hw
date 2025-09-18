@@ -36,6 +36,9 @@ aligned by Ulrich Germann:
 - `README.md` - This file
 - `hybrid_hyperparameters.py` - itenerate through sigma and threshold combinations to find the best combination
 - `hybrid_hyperparameters_output.txt` - output of the precision, recall, AER from `hybrid_hyperparameters.py`.
+- `ablation_diag_only.a` - output of the precision, recall, AER with only diagonal bias with the best setting of hybrid model.
+- `ablation_minus_len.a` - output of the precision, recall, AER with diagonal bias and position bias with the best setting of hybrid model.
+- `ablation_minus_pos.a` - output of the precision, recall, AER with diagonal bias and length bias with the best setting of hybrid model.
 
 ## Models Implemented
 
@@ -56,15 +59,6 @@ aligned by Ulrich Germann:
 - **Performance**: AER = 0.261 (62% improvement over baseline)
 - **Description**: Combines translation probabilities with diagonal, position, and length biases
 - **Format**: Linear script matching `align` structure
-
-## Performance Summary
-
-| Model | Precision | Recall    | AER       | Improvement    |
-|-------|-----------|-----------|-----------|----------------|
-| Baseline Dice | 0.239     | 0.595     | 0.682     | -              |
-| IBM Model 1 | 0.513     | 0.675     | 0.436     | 36% better     |
-| Diagonal Preference | 0.562     | 0.734     | 0.383     | 44% better     |
-| **Hybrid Model** | **0.648** | **0.766** | **0.314** | **54% better** |
 
 ## Usage
 
@@ -93,6 +87,13 @@ python score-alignments < alignment_file
 # To print out precision, recell, AER results (1000 lines alignment example)
 python align_file.py -n 1000| python score-alignments | tail -3
 ```
+
+### Ablation Study
+```
+python ablation_hybrid_variants.py -n 1000 -i 8 -s 0.3 -t 0.01 \
+  --variants=full,minus_len,minus_pos,diag_only,ibm1 --prefix ablation_
+```
+then evaluate them with `score-alignments`
 ### Checking Alignment Format
 
 ```bash
