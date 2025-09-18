@@ -90,7 +90,7 @@ python score-alignments < alignment_file | tail -3
 
 ### Ablation Study
 ```
-python ablation_hybrid_variants.py -n 1000 -i 8 -s 0.3 -t 0.01 \
+python ablation_hybrid_variants.py -n 10000 -i 8 -s 0.3 -t 0.01 \
   --variants=full,minus_len,minus_pos,diag_only,ibm1 --prefix ablation_
 ```
 then evaluate them with `score-alignments`
