@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+
+import sys
+import optparse
+from collections import namedtuple
+import models
+
+# Adds reorder limit
+optparser = optparse.OptionParser()
+optparser.add_option("-i", "--input", dest="input", default="data/input", help="File containing sentences to translate (default=data/input)")
+optparser.add_option("-t", "--translation-model", dest="tm", default="data/tm", help="File containing translation model (default=data/tm)")
+optparser.add_option("-l", "--language-model", dest="lm", default="data/lm", help="File containing ARPA-format language model (default=data/lm)")
+optparser.add_option("-n", "--num_sentences", dest="num_sents", default=sys.maxsize, type="int", help="Number of sentences to decode (default=no limit)")
+optparser.add_option("-k", "--translations-per-phrase", dest="k", default=1, type="int", help="Limit on number of translations to consider per phrase (default=1)")
+optparser.add_option("-s", "--stack-size", dest="s", default=100, type="int", help="Maximum stack size (default=100)")
+optparser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False,  help="Verbose mode (default=off)")
+optparser.add_option("-r", "--reorder-limit", dest="reorder_limit", default=2, type="int", help="Maximum reordering distance (default=2)")
+opts = optparser.parse_args()[0]
+
+tm = models.TM(opts.tm, opts.k)
+lm = models.LM(opts.lm)
+french = [tuple(line.strip().split()) for line in open(opts.input).readlines()[:opts.num_sents]]
+
+# tm should translate unknown words as-is with probability 1
+for word in set(sum(french,())):
+  if (word,) not in tm:
+    tm[(word,)] = [models.phrase(word, 0.0)]
+
+# Hybrid decode is mostly monotone inherited from the original decode but with limiting reordering
+def hybrid_decode(french, stack_size, reorder_limit):
+    hypothesis = namedtuple("hypothesis", "logprob, lm_state, predecessor, phrase, covered_positions")
+    
+    f_len = len(french)
+
+    initial_hypothesis = hypothesis(0.0, lm.begin(), None, None, set())
+    stacks = [{} for _ in range(f_len + 1)]
+    stacks[0][lm.begin()] = initial_hypothesis
+    
+    for i in range(f_len):
+        for h in sorted(stacks[i].values(), key=lambda h: -h.logprob)[:stack_size]:
+            for j in range(i + 1, f_len + 1): #  Phrases starting from position i (monotone)
+                phrase = french[i:j]
+                if phrase in tm:
+                    for translation in tm[phrase]:
+                        logprob = h.logprob + translation.logprob
+                        lm_state = h.lm_state
+                        
+                        for word in translation.english.split():
+                            (lm_state, word_logprob) = lm.score(lm_state, word)
+                            logprob += word_logprob
+                        
+                        new_covered = h.covered_positions | set(range(i, j))
+                        if len(new_covered) == f_len:
+                            logprob += lm.end(lm_state)
+                        
+                        new_hypothesis = hypothesis(logprob, lm_state, h, translation, new_covered)
+                        
+                        if lm_state not in stacks[len(new_covered)] or stacks[len(new_covered)][lm_state].logprob < logprob:
+                            stacks[len(new_covered)][lm_state] = new_hypothesis
+            
+            # Limited reordering: only swap adjacent phrases
+            if reorder_limit > 0 and i < f_len - 1:
+                for swap_len in range(1, min(reorder_limit + 1, f_len - i)):
+                    if i + swap_len < f_len:
+                        # Try swapping current phrase with next phrase
+                        for j in range(i + swap_len + 1, min(i + swap_len + 1 + reorder_limit, f_len + 1)):
+                            phrase1 = french[i:i+swap_len]
+                            phrase2 = french[i+swap_len:j]
+                            
+                            if phrase1 in tm and phrase2 in tm:
+                                # Try all combinations
+                                for trans1 in tm[phrase1]:
+                                    for trans2 in tm[phrase2]:
+                                        logprob = h.logprob + trans1.logprob + trans2.logprob
+                                        lm_state = h.lm_state
+                                        
+                                        # Score phrase2 first (reordered)
+                                        for word in trans2.english.split():
+                                            (lm_state, word_logprob) = lm.score(lm_state, word)
+                                            logprob += word_logprob
+                                        
+                                        # Then phrase1
+                                        for word in trans1.english.split():
+                                            (lm_state, word_logprob) = lm.score(lm_state, word)
+                                            logprob += word_logprob
+                                        
+                                        new_covered = h.covered_positions | set(range(i, j))
+                                        if len(new_covered) == f_len:
+                                            logprob += lm.end(lm_state)
+                                        
+                                        # Create combined hypothesis
+                                        combined_phrase = models.phrase(
+                                            trans2.english + " " + trans1.english,
+                                            trans1.logprob + trans2.logprob
+                                        )
+                                        new_hypothesis = hypothesis(logprob, lm_state, h, combined_phrase, new_covered)
+                                        
+                                        if lm_state not in stacks[len(new_covered)] or stacks[len(new_covered)][lm_state].logprob < logprob:
+                                            stacks[len(new_covered)][lm_state] = new_hypothesis
+    
+    # Find best complete hypothesis
+    if stacks[f_len]:
+        return max(stacks[f_len].values(), key=lambda h: h.logprob)
+    else:
+        return initial_hypothesis
+
+sys.stderr.write("Decoding %s...\n" % (opts.input,))
+for f in french:
+  if opts.verbose:
+    sys.stderr.write("Translating: %s\n" % " ".join(f))
+  
+  winner = hybrid_decode(f, opts.s, opts.reorder_limit)
+  
+  def extract_english(h):
+    return "" if h.predecessor is None else "%s%s " % (extract_english(h.predecessor), h.phrase.english)
+  
+  print(extract_english(winner))
+  
+  if opts.verbose:
+    def extract_tm_logprob(h):
+      return 0.0 if h.predecessor is None else h.phrase.logprob + extract_tm_logprob(h.predecessor)
+    if 'winner' in locals():
+      tm_logprob = extract_tm_logprob(winner)
+      sys.stderr.write("LM = %f, TM = %f, Total = %f\n" %
+                       (winner.logprob - tm_logprob, tm_logprob, winner.logprob))
