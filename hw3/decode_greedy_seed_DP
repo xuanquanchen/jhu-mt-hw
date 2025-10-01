@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+
+import sys
+import optparse
+from collections import namedtuple, defaultdict
+import models
+
+optparser = optparse.OptionParser()
+optparser.add_option("-i", "--input", dest="input", default="data/input", help="File containing sentences to translate (default=data/input)")
+optparser.add_option("-t", "--translation-model", dest="tm", default="data/tm", help="File containing translation model (default=data/tm)")
+optparser.add_option("-l", "--language-model", dest="lm", default="data/lm", help="File containing ARPA-format language model (default=data/lm)")
+optparser.add_option("-n", "--num_sentences", dest="num_sents", default=sys.maxsize, type="int", help="Number of sentences to decode (default=no limit)")
+optparser.add_option("-k", "--translations-per-phrase", dest="k", default=1, type="int", help="Limit on number of translations to consider per phrase (default=1)")
+optparser.add_option("-s", "--stack-size", dest="s", default=100, type="int", help="Maximum stack size (default=100)")
+optparser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False,  help="Verbose mode (default=off)")
+optparser.add_option("-m", "--max-iterations", dest="max_iterations", default=100, type="int", help="Maximum iterations for greedy search (default=100)")
+optparser.add_option("-r", "--reorder-limit", dest="reorder_limit", default=3, type="int", help="Maximum reordering distance (default=3)")
+opts = optparser.parse_args()[0]
+
+tm = models.TM(opts.tm, opts.k)
+lm = models.LM(opts.lm)
+french = [tuple(line.strip().split()) for line in open(opts.input).readlines()[:opts.num_sents]]
+
+# tm should translate unknown words as-is with probability 1
+for word in set(sum(french,())):
+  if (word,) not in tm:
+    tm[(word,)] = [models.phrase(word, 0.0)]
+
+class PhraseAlignment:
+    def __init__(self, start, end, phrase, translation):
+        self.start = start
+        self.end = end
+        self.phrase = phrase
+        self.translation = translation
+        self.english_words = translation.english.split()
+
+class GreedyState:
+    def __init__(self, alignments, lm_state, logprob):
+        self.alignments = alignments  # List of PhraseAlignment objects
+        self.lm_state = lm_state
+        self.logprob = logprob
+        self.covered_positions = set()
+        for align in alignments:
+            self.covered_positions.update(range(align.start, align.end))
+    
+    def get_english_words(self):
+        # Sort alignments by start position
+        sorted_alignments = sorted(self.alignments, key=lambda x: x.start)
+        words = []
+        for align in sorted_alignments:
+            words.extend(align.english_words)
+        return words
+    
+    def is_complete(self, f_len): # Check if all french words are covered
+        return len(self.covered_positions) == f_len
+
+def dp_seed(french): # Find the min. number of phrases covering the source sentence
+    f_len = len(french)
+    
+    # DP table: dp[i] = (min_phrases, best_alignments, logprob, lm_state)
+    dp = [None] * (f_len + 1)
+    dp[0] = (0, [], 0.0, lm.begin())
+    
+    for i in range(f_len + 1):
+        if dp[i] is None:
+            continue
+
+        for j in range(i + 1, f_len + 1):
+            phrase = french[i:j]
+            if phrase in tm:
+                for translation in tm[phrase]:
+                    # Calculate new logprob
+                    new_logprob = dp[i][2] + translation.logprob
+                    new_lm_state = dp[i][3]
+                    
+                    # Score each English word
+                    for word in translation.english.split():
+                        (new_lm_state, word_logprob) = lm.score(new_lm_state, word)
+                        new_logprob += word_logprob
+                    
+                    # Add end-of-sentence probability if complete
+                    if j == f_len:
+                        new_logprob += lm.end(new_lm_state)
+                    
+                    # Update DP table
+                    new_alignments = dp[i][1] + [PhraseAlignment(i, j, phrase, translation)]
+                    if dp[j] is None or dp[j][0] > dp[i][0] + 1 or (dp[j][0] == dp[i][0] + 1 and dp[j][2] < new_logprob):
+                        dp[j] = (dp[i][0] + 1, new_alignments, new_logprob, new_lm_state)
+    
+    if dp[f_len] is not None:
+        return GreedyState(dp[f_len][1], dp[f_len][3], dp[f_len][2])
+    else:
+        # Fallback: create empty state
+        return GreedyState([], lm.begin(), 0.0)
+
+def score_state(state, french):
+    if not state.alignments:
+        return float('-inf')
+
+    lm_score = state.logprob
+
+    tm_score = sum(align.translation.logprob for align in state.alignments)
+    
+    # Word penalty (negative for length)
+    word_penalty = -len(state.get_english_words()) * 0.1
+    
+    # Distortion penalty (simplified)
+    distortion_penalty = 0.0
+    sorted_alignments = sorted(state.alignments, key=lambda x: x.start)
+    for i in range(1, len(sorted_alignments)):
+        prev_end = sorted_alignments[i-1].end
+        curr_start = sorted_alignments[i].start
+        if curr_start > prev_end:
+            distortion_penalty -= 0.1 * (curr_start - prev_end)
+    
+    total_score = lm_score + word_penalty + distortion_penalty
+    return total_score
+
+def get_neighborhood(state, french): # using local search operations to generate neighborhood states
+    neighbors = []
+    f_len = len(french)
+    
+    # Move operation: move a phrase to a different position
+    for i, align in enumerate(state.alignments):
+        for new_start in range(f_len):
+            if new_start + (align.end - align.start) <= f_len:
+                # Check if new position doesn't overlap with existing alignments
+                new_positions = set(range(new_start, new_start + (align.end - align.start)))
+                if not new_positions & state.covered_positions:
+                    new_alignments = state.alignments.copy()
+                    new_alignments[i] = PhraseAlignment(new_start, new_start + (align.end - align.start), 
+                                                      align.phrase, align.translation)
+                    new_state = GreedyState(new_alignments, state.lm_state, state.logprob)
+                    neighbors.append(new_state)
+    
+    # Swap: swap two phrases
+    for i in range(len(state.alignments)):
+        for j in range(i + 1, len(state.alignments)):
+            align1, align2 = state.alignments[i], state.alignments[j]
+            # Swap positions
+            new_align1 = PhraseAlignment(align2.start, align2.end, align1.phrase, align1.translation)
+            new_align2 = PhraseAlignment(align1.start, align1.end, align2.phrase, align2.translation)
+            
+            new_alignments = state.alignments.copy()
+            new_alignments[i] = new_align1
+            new_alignments[j] = new_align2
+            new_state = GreedyState(new_alignments, state.lm_state, state.logprob)
+            neighbors.append(new_state)
+    
+    # Replace: replace a phrase with a different translation
+    for i, align in enumerate(state.alignments):
+        phrase = align.phrase
+        if phrase in tm:
+            for translation in tm[phrase]:
+                if translation != align.translation:
+                    new_alignments = state.alignments.copy()
+                    new_alignments[i] = PhraseAlignment(align.start, align.end, phrase, translation)
+                    new_state = GreedyState(new_alignments, state.lm_state, state.logprob)
+                    neighbors.append(new_state)
+    
+    return neighbors
+
+def greedy_search(french): # Greedy serach algo
+    # Seed with DP algorithm
+    current = dp_seed(french)
+    
+    if opts.verbose:
+        sys.stderr.write("Initial DP seed score: %f\n" % score_state(current, french))
+    
+    for iteration in range(opts.max_iterations):
+        current_score = score_state(current, french)
+        best_score = current_score
+        best_state = current
+        
+        # Explore neighborhood
+        neighbors = get_neighborhood(current, french)
+        
+        for neighbor in neighbors:
+            neighbor_score = score_state(neighbor, french)
+            if neighbor_score > best_score:
+                best_score = neighbor_score
+                best_state = neighbor
+        
+        # If no improvement, return current state
+        if best_score == current_score:
+            break
+        # Update current state
+        current = best_state
+    return current
+
+sys.stderr.write("Decoding %s...\n" % (opts.input,))
+for f in french:
+  winner = greedy_search(f)
+  
+  if winner.alignments:
+    english_translation = " ".join(winner.get_english_words())
+  else:
+    english_translation = ""
+  
+  print(english_translation)

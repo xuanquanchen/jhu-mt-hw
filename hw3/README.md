@@ -31,3 +31,57 @@ originally aligned by Ulrich Germann:
 
 The language model and translation model are computed from the data 
 in the align directory, using alignments from the Berkeley aligner.
+
+# Update
+
+## File Orgnizations
+
+- `decode_astar_simple` A simplified version of A* Decoder without heuristic algorithms mentioned in Och et.al., 2001
+- `decode_beam_search_reorder` Best Performance
+- `decode_greedy_seed_DP` Used Dynamic Programming (DP) based search algorithm mentioned in Langlais et. al., 2007
+- `translations_astar_simple`
+- `translations_baseline` Result from `decode`
+- `translations_beam_search_reorder`
+- `translations_greedy_seed_DP`
+
+## Performance Comparison
+
+| Decoder                 | Total Log Probability | Per-Sentence Improvement | Improvement % | Notes |
+|-------------------------|-----------------------|--------------------------|---------------|-------|
+| **Beam Search Reorder** | **-1396.95**          | **+0.895** | **+2.98%** | **Best** - Limited reordering with hybrid approach |
+| Original Baseline       | -1439.87              | 0.000 | 0.00% | Monotone, no reordering |
+| Greedy with DP seed     | -1480.53              | -0.847 | -2.82% | Greedy local search with DP seed |
+| A* Simple               | -1998.61              | -11.641 | -38.81% | Simplified A* search |
+| A* Complex              | -2230.69              | -16.475 | -54.89% | Complex A* with heuristics |
+
+## Algorithms
+
+### 1. Original Decoder (Monotone) - Baseline
+- **Strategy**: Left-to-right phrase translation
+- **Reordering**: None (monotone only)
+- **Method**: Dynamic programming with stack-based pruning
+- **Performance**: -1439.87 log probability (0.00% improvement)
+- **File**: `decode`
+
+### 2. Hybrid Beam Search Decoder - **Best Performance**
+- **Strategy**: Primarily monotone with limited reordering
+- **Reordering**: Adjacent phrase swapping (limit = 2)
+- **Method**: Dynamic programming with beam search
+- **Pruning**: Stack size limiting for efficiency
+- **Performance**: -1396.95 log probability (+2.98% improvement)
+- **File**: `decode_beam_search_reorder`
+
+### 3. Greedy Decoder with DP Seed
+- **Strategy**: Dynamic programming seed + local search
+- **Reordering**: Move, swap, replace operations
+- **Method**: Greedy local search with neighborhood exploration
+- **Performance**: -1480.53 log probability (-2.82% improvement)
+- **File**: `decode_greedy_seed_DP`
+
+### 4. A* Search (Simplified)
+- **Strategy**: A* search with phrase-based translation
+- **Reordering**: Limited reordering with distance constraints
+- **Method**: A* algorithm with greedy completion
+- **Performance**: -1998.61 log probability (-38.81% improvement)
+- **File**: `decode_astar_simple`
+
