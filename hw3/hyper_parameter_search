@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import argparse
+import itertools
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+from collections import OrderedDict
+
+# -------- Utils --------
+
+TOTAL_RE = re.compile(r"Total corpus log probability.*?:\s*([\-0-9.]+)")
+
+def run_cmd(cmd, input_text=None, timeout=None):
+    """Run a shell command. Optionally pipe input_text to stdin. Return (rc, stdout, stderr, duration)."""
+    t0 = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            input=input_text.encode("utf-8") if input_text is not None else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return (124, "", f"TIMEOUT after {timeout}s: {' '.join(cmd)}", time.time() - t0)
+    return (proc.returncode, proc.stdout.decode("utf-8", errors="ignore"),
+            proc.stderr.decode("utf-8", errors="ignore"), time.time() - t0)
+
+def decode_once(decoder_path, tm, lm, input_path, k, stack_size, reorder_limit, dist_alpha, num_sents=None, verbose=False, py=sys.executable, timeout=None):
+    """Run your decoder and return translations (stdout)."""
+    cmd = [
+        py, decoder_path,
+        "-t", tm,
+        "-l", lm,
+        "-i", input_path,
+        "-k", str(k),
+        "-s", str(stack_size),
+        "-r", str(reorder_limit),
+        "--distortion-alpha", str(dist_alpha),
+    ]
+    if num_sents is not None:
+        cmd += ["-n", str(num_sents)]
+    if verbose:
+        print("[decode cmd]", " ".join(cmd))
+    rc, out, err, dur = run_cmd(cmd, timeout=timeout)
+    if verbose:
+        sys.stderr.write(err)
+        print(f"[decode] rc={rc} time={dur:.2f}s\n", file=sys.stderr)
+    if rc != 0:
+        raise RuntimeError(f"Decoder failed (rc={rc}). Stderr:\n{err}")
+    return out, dur, err
+
+def score_translations(compute_score_path, translations_text, verbose=False, py=sys.executable, timeout=None):
+    """Pipe translations into compute-model-score and parse total logprob."""
+    cmd = [py, compute_score_path]
+    if verbose:
+        print("[score cmd]", " ".join(cmd))
+    rc, out, err, dur = run_cmd(cmd, input_text=translations_text, timeout=timeout)
+    if verbose:
+        sys.stderr.write(err)
+        print(f"[score] rc={rc} time={dur:.2f}s\n", file=sys.stderr)
+    if rc != 0:
+        raise RuntimeError(f"Scorer failed (rc={rc}). Stderr:\n{err}")
+    m = TOTAL_RE.search(out)
+    if not m:
+        # 有些版本把“Total corpus log probability ...”写到stderr，兜底搜一遍
+        m = TOTAL_RE.search(err)
+    if not m:
+        raise RuntimeError("Could not find 'Total corpus log probability' in scorer output.\n"
+                           f"STDOUT:\n{out}\nSTDERR:\n{err}")
+    total = float(m.group(1))
+    return total, out, dur, err
+
+def grid(values):
+    """支持逗号分隔或用冒号步进（如 0.1:0.5:0.1 -> 0.1,0.2,0.3,0.4,0.5）"""
+    if isinstance(values, (list, tuple)):
+        return list(values)
+    s = str(values)
+    if ":" in s:
+        parts = s.split(":")
+        if len(parts) == 3:
+            start, end, step = map(float, parts)
+            seq = []
+            x = start
+            # 处理浮点累计误差：保留3位小数
+            while x <= end + 1e-9:
+                seq.append(round(x, 6))
+                x += step
+            return seq
+    return [type_cast(x) for x in s.split(",") if x != ""]
+
+def type_cast(x):
+    # 尝试转 int，否则转 float；都不行就原样字符串
+    try:
+        if "." not in x:
+            return int(x)
+        return float(x)
+    except:
+        try:
+            return float(x)
+        except:
+            return x
+
+# -------- Main search --------
+
+def main():
+    parser = argparse.ArgumentParser(description="Grid search hyperparams for the phrase-based decoder (with distortion penalty).")
+    parser.add_argument("--decoder", default="decoder.py", help="Path to your decoder script (this is your modified decoder).")
+    parser.add_argument("--scorer", default="compute-model-score", help="Path to compute-model-score (a Python script).")
+    parser.add_argument("-t", "--tm", default="data/tm", help="TM path")
+    parser.add_argument("-l", "--lm", default="data/lm", help="LM path")
+    parser.add_argument("-i", "--input", default="data/input", help="Input path")
+    parser.add_argument("-n", "--num-sents", type=int, default=None, help="Limit number of sentences for faster tuning")
+    parser.add_argument("--k-grid", default="3,5,7", help="Grid for -k (translations per phrase). e.g. '3,5,7' ")
+    parser.add_argument("--stack-grid", default="100,200,300,400", help="Grid for -s (stack size)")
+    parser.add_argument("--reorder-grid", default="2,3,4", help="Grid for -r (reorder limit)")
+    parser.add_argument("--alpha-grid", default="0.1:0.4:0.05", help="Grid for --distortion-alpha (start:end:step or comma list)")
+    parser.add_argument("--decode-timeout", type=int, default=None, help="Per-run timeout (seconds) for decoding")
+    parser.add_argument("--score-timeout", type=int, default=None, help="Per-run timeout (seconds) for scoring")
+    parser.add_argument("--python", default=sys.executable, help="Python interpreter to invoke for decoder/scorer")
+    parser.add_argument("--json-out", default="tune_results.json", help="Where to save all results as JSON")
+    parser.add_argument("--topk", type=int, default=10, help="Print top-k configs")
+    parser.add_argument("--verbose", action="store_true", help="Verbose logs")
+    args = parser.parse_args()
+
+    k_values        = grid(args.k_grid)
+    stack_values    = grid(args.stack_grid)
+    reorder_values  = grid(args.reorder_grid)
+    alpha_values    = grid(args.alpha_grid)
+
+    combos = list(itertools.product(k_values, stack_values, reorder_values, alpha_values))
+    print(f"[info] total combos: {len(combos)}")
+
+    results = []
+    best = None
+
+    for idx, (k, ssz, rlim, alpha) in enumerate(combos, 1):
+        cfg = OrderedDict(k=k, stack_size=ssz, reorder_limit=rlim, dist_alpha=alpha)
+        tag = f"k={k} s={ssz} r={rlim} a={alpha}"
+        print(f"[{idx}/{len(combos)}] evaluating {tag}")
+
+        try:
+            translations, dec_time, dec_stderr = decode_once(
+                decoder_path=args.decoder,
+                tm=args.tm, lm=args.lm, input_path=args.input,
+                k=k, stack_size=ssz, reorder_limit=rlim, dist_alpha=alpha,
+                num_sents=args.num_sents, verbose=args.verbose,
+                py=args.python, timeout=args.decode_timeout
+            )
+            total_logprob, scorer_stdout, score_time, scorer_stderr = score_translations(
+                compute_score_path=args.scorer,
+                translations_text=translations,
+                verbose=args.verbose,
+                py=args.python,
+                timeout=args.score_timeout
+            )
+        except Exception as e:
+            print(f"[warn] failed {tag}: {e}")
+            total_logprob = float("-inf")
+            dec_time = score_time = None
+
+        rec = {
+            "k": k,
+            "stack_size": ssz,
+            "reorder_limit": rlim,
+            "dist_alpha": alpha,
+            "total_logprob": total_logprob,
+            "decode_time_sec": dec_time,
+            "score_time_sec": score_time,
+        }
+        results.append(rec)
+
+        if best is None or total_logprob > best["total_logprob"]:
+            best = rec
+            print(f"  -> new best: total_logprob={total_logprob:.6f} @ {tag}")
+
+    # 排序并输出
+    results_sorted = sorted(results, key=lambda x: x["total_logprob"], reverse=True)
+    print("\n=== TOP configs (by total logprob) ===")
+    for r in results_sorted[:args.topk]:
+        print(f"total={r['total_logprob']:.6f} | k={r['k']} s={r['stack_size']} r={r['reorder_limit']} a={r['dist_alpha']} "
+              f"| decode={r['decode_time_sec']:.2f if r['decode_time_sec'] else -1}s score={r['score_time_sec']:.2f if r['score_time_sec'] else -1}s")
+
+    # 保存 JSON
+    try:
+        with open(args.json_out, "w", encoding="utf-8") as f:
+            json.dump(results_sorted, f, ensure_ascii=False, indent=2)
+        print(f"\n[info] all results saved to {args.json_out}")
+    except Exception as e:
+        print(f"[warn] failed to save {args.json_out}: {e}")
+
+    print("\n=== BEST ===")
+    if best:
+        print(json.dumps(best, ensure_ascii=False, indent=2))
+    else:
+        print("No successful runs.")
+
+if __name__ == "__main__":
+    main()

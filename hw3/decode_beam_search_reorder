@@ -11,10 +11,12 @@ optparser.add_option("-i", "--input", dest="input", default="data/input", help="
 optparser.add_option("-t", "--translation-model", dest="tm", default="data/tm", help="File containing translation model (default=data/tm)")
 optparser.add_option("-l", "--language-model", dest="lm", default="data/lm", help="File containing ARPA-format language model (default=data/lm)")
 optparser.add_option("-n", "--num_sentences", dest="num_sents", default=sys.maxsize, type="int", help="Number of sentences to decode (default=no limit)")
-optparser.add_option("-k", "--translations-per-phrase", dest="k", default=1, type="int", help="Limit on number of translations to consider per phrase (default=1)")
-optparser.add_option("-s", "--stack-size", dest="s", default=100, type="int", help="Maximum stack size (default=100)")
+optparser.add_option("-k", "--translations-per-phrase", dest="k", default=5, type="int", help="Limit on number of translations to consider per phrase (default=5)")
+optparser.add_option("-s", "--stack-size", dest="s", default=300, type="int", help="Maximum stack size (default=300)")
 optparser.add_option("-v", "--verbose", dest="verbose", action="store_true", default=False,  help="Verbose mode (default=off)")
-optparser.add_option("-r", "--reorder-limit", dest="reorder_limit", default=2, type="int", help="Maximum reordering distance (default=2)")
+optparser.add_option("-r", "--reorder-limit", dest="reorder_limit", default=3, type="int", help="Maximum reordering distance (default=3)")
+optparser.add_option("--distortion-alpha", dest="dist_alpha", default=0.2, type="float", help="Distortion penalty coefficient alpha (default=0.2)")
+
 opts = optparser.parse_args()[0]
 
 tm = models.TM(opts.tm, opts.k)
@@ -27,36 +29,84 @@ for word in set(sum(french,())):
     tm[(word,)] = [models.phrase(word, 0.0)]
 
 # Hybrid decode is mostly monotone inherited from the original decode but with limiting reordering
-def hybrid_decode(french, stack_size, reorder_limit):
-    hypothesis = namedtuple("hypothesis", "logprob, lm_state, predecessor, phrase, covered_positions")
-    
+def hybrid_decode(french, stack_size, reorder_limit, dist_alpha):
+    hypothesis = namedtuple("hypothesis", "logprob, lm_state, predecessor, phrase, coverage, last_word")
+
     f_len = len(french)
 
-    initial_hypothesis = hypothesis(0.0, lm.begin(), None, None, set())
-    stacks = [{} for _ in range(f_len + 1)]
-    stacks[0][lm.begin()] = initial_hypothesis
-    
+    # Precompute future cost tables (optimistic upper bounds using TM only)
+    # future_tm[i][j]: best TM logprob for phrase french[i:j] (or -inf if none)
+    neg_inf = float("-inf")
+    future_tm = [[neg_inf for _ in range(f_len + 1)] for _ in range(f_len + 1)]
     for i in range(f_len):
-        for h in sorted(stacks[i].values(), key=lambda h: -h.logprob)[:stack_size]:
+        for j in range(i + 1, f_len + 1):
+            phrase = french[i:j]
+            if phrase in tm:
+                future_tm[i][j] = max(p.logprob for p in tm[phrase])
+
+    # future_best[a][b]: best achievable sum of TM logprobs to cover contiguous segment [a,b)
+    future_best = [[0.0 for _ in range(f_len + 1)] for _ in range(f_len + 1)]
+    for length in range(1, f_len + 1):
+        for a in range(0, f_len - length + 1):
+            b = a + length
+            best = neg_inf
+            # try all first phrase splits
+            for mid in range(a + 1, b + 1):
+                if future_tm[a][mid] != neg_inf:
+                    best = max(best, future_tm[a][mid] + future_best[mid][b])
+            # allow impossible segments to remain at -inf; replace with 0.0 so heuristic is safe
+            future_best[a][b] = best if best != neg_inf else 0.0
+
+    def future_remaining(coverage):
+        # Sum best future over uncovered contiguous segments
+        total = 0.0
+        start = 0
+        while start < f_len:
+            # skip covered
+            while start < f_len and (coverage >> start) & 1:
+                start += 1
+            if start >= f_len:
+                break
+            end = start
+            while end < f_len and not (coverage >> end) & 1:
+                end += 1
+            total += future_best[start][end]
+            start = end
+        return total
+
+    initial_hypothesis = hypothesis(0.0, lm.begin(), None, None, 0, 0)
+    stacks = [{} for _ in range(f_len + 1)]
+    stacks[0][lm.begin(), 0] = initial_hypothesis
+
+    for i in range(f_len):
+        for h in sorted(stacks[i].values(), key=lambda h: -(h.logprob + future_remaining(h.coverage)))[:stack_size]:
             for j in range(i + 1, f_len + 1): #  Phrases starting from position i (monotone)
                 phrase = french[i:j]
                 if phrase in tm:
                     for translation in tm[phrase]:
-                        logprob = h.logprob + translation.logprob
+                        dist = abs(i - h.last_word)
+                        logprob = h.logprob + translation.logprob - dist_alpha * dist
                         lm_state = h.lm_state
                         
                         for word in translation.english.split():
                             (lm_state, word_logprob) = lm.score(lm_state, word)
                             logprob += word_logprob
                         
-                        new_covered = h.covered_positions | set(range(i, j))
-                        if len(new_covered) == f_len:
+                        #bit mask
+                        mask = 0
+                        for pos in range(i, j):
+                            mask |= 1 << pos
+                        new_coverage = h.coverage | mask
+                        
+                        if new_coverage == (1 << f_len) - 1:
                             logprob += lm.end(lm_state)
                         
-                        new_hypothesis = hypothesis(logprob, lm_state, h, translation, new_covered)
+                        new_hypothesis = hypothesis(logprob, lm_state, h, translation, new_coverage, j)
                         
-                        if lm_state not in stacks[len(new_covered)] or stacks[len(new_covered)][lm_state].logprob < logprob:
-                            stacks[len(new_covered)][lm_state] = new_hypothesis
+                        new_len = bin(new_coverage).count("1")
+                        key = (lm_state, new_coverage)
+                        if key not in stacks[new_len] or stacks[new_len][key].logprob < logprob:
+                            stacks[new_len][key] = new_hypothesis
             
             # Limited reordering: only swap adjacent phrases
             if reorder_limit > 0 and i < f_len - 1:
@@ -84,8 +134,13 @@ def hybrid_decode(french, stack_size, reorder_limit):
                                             (lm_state, word_logprob) = lm.score(lm_state, word)
                                             logprob += word_logprob
                                         
-                                        new_covered = h.covered_positions | set(range(i, j))
-                                        if len(new_covered) == f_len:
+                                        #bitmask
+                                        mask = 0
+                                        for pos in range(i, j):
+                                            mask |= 1 << pos
+                                        new_coverage = h.coverage | mask
+                                        
+                                        if new_coverage == (1 << f_len) - 1:
                                             logprob += lm.end(lm_state)
                                         
                                         # Create combined hypothesis
@@ -93,10 +148,12 @@ def hybrid_decode(french, stack_size, reorder_limit):
                                             trans2.english + " " + trans1.english,
                                             trans1.logprob + trans2.logprob
                                         )
-                                        new_hypothesis = hypothesis(logprob, lm_state, h, combined_phrase, new_covered)
+                                        new_hypothesis = hypothesis(logprob, lm_state, h, combined_phrase, new_coverage, j)
                                         
-                                        if lm_state not in stacks[len(new_covered)] or stacks[len(new_covered)][lm_state].logprob < logprob:
-                                            stacks[len(new_covered)][lm_state] = new_hypothesis
+                                        new_len = bin(new_coverage).count("1")
+                                        key = (lm_state, new_coverage)
+                                        if key not in stacks[new_len] or stacks[new_len][key].logprob < logprob:
+                                            stacks[new_len][key] = new_hypothesis
     
     # get the best complete hypothesis
     if stacks[f_len]:
@@ -106,7 +163,7 @@ def hybrid_decode(french, stack_size, reorder_limit):
 
 sys.stderr.write("Decoding %s...\n" % (opts.input,))
 for f in french:
-  winner = hybrid_decode(f, opts.s, opts.reorder_limit)
+  winner = hybrid_decode(f, opts.s, opts.reorder_limit, opts.dist_alpha)
   
   def extract_english(h):
     return "" if h.predecessor is None else "%s%s " % (extract_english(h.predecessor), h.phrase.english)
