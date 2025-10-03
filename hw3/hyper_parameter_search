@@ -33,7 +33,7 @@ def run_cmd(cmd, input_text=None, timeout=None):
             proc.stderr.decode("utf-8", errors="ignore"), time.time() - t0)
 
 def decode_once(decoder_path, tm, lm, input_path, k, stack_size, reorder_limit, dist_alpha, num_sents=None, verbose=False, py=sys.executable, timeout=None):
-    """Run your decoder and return translations (stdout)."""
+    """Run decoder and return translations (stdout)."""
     cmd = [
         py, decoder_path,
         "-t", tm,
@@ -56,12 +56,28 @@ def decode_once(decoder_path, tm, lm, input_path, k, stack_size, reorder_limit, 
         raise RuntimeError(f"Decoder failed (rc={rc}). Stderr:\n{err}")
     return out, dur, err
 
-def score_translations(compute_score_path, translations_text, verbose=False, py=sys.executable, timeout=None):
+def score_translations(compute_score_path, translations_text, input_path, num_sents=None, verbose=False, py=sys.executable, timeout=None):
     """Pipe translations into compute-model-score and parse total logprob."""
-    cmd = [py, compute_score_path]
+    # Create temporary input file with limited sentences if needed
+    temp_input = None
+    if num_sents is not None:
+        import tempfile
+        with open(input_path, 'r') as f:
+            lines = f.readlines()[:num_sents]
+        temp_input = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.input')
+        temp_input.writelines(lines)
+        temp_input.close()
+        input_path = temp_input.name
+    
+    cmd = [py, compute_score_path, "-i", input_path]
     if verbose:
         print("[score cmd]", " ".join(cmd))
     rc, out, err, dur = run_cmd(cmd, input_text=translations_text, timeout=timeout)
+    
+    # Clean up temporary file
+    if temp_input is not None:
+        import os
+        os.unlink(temp_input.name)
     if verbose:
         sys.stderr.write(err)
         print(f"[score] rc={rc} time={dur:.2f}s\n", file=sys.stderr)
@@ -111,13 +127,13 @@ def type_cast(x):
 
 def main():
     parser = argparse.ArgumentParser(description="Grid search hyperparams for the phrase-based decoder (with distortion penalty).")
-    parser.add_argument("--decoder", default="decoder.py", help="Path to your decoder script (this is your modified decoder).")
+    parser.add_argument("--decoder", default="decode_beam_search_reorder", help="Path to your decoder script (this is your modified decoder).")
     parser.add_argument("--scorer", default="compute-model-score", help="Path to compute-model-score (a Python script).")
     parser.add_argument("-t", "--tm", default="data/tm", help="TM path")
     parser.add_argument("-l", "--lm", default="data/lm", help="LM path")
     parser.add_argument("-i", "--input", default="data/input", help="Input path")
     parser.add_argument("-n", "--num-sents", type=int, default=None, help="Limit number of sentences for faster tuning")
-    parser.add_argument("--k-grid", default="3,5,7", help="Grid for -k (translations per phrase). e.g. '3,5,7' ")
+    parser.add_argument("--k-grid", default="3,5,7", help="Grid for -k (translations_beamsearch per phrase). e.g. '3,5,7' ")
     parser.add_argument("--stack-grid", default="100,200,300,400", help="Grid for -s (stack size)")
     parser.add_argument("--reorder-grid", default="2,3,4", help="Grid for -r (reorder limit)")
     parser.add_argument("--alpha-grid", default="0.1:0.4:0.05", help="Grid for --distortion-alpha (start:end:step or comma list)")
@@ -156,6 +172,8 @@ def main():
             total_logprob, scorer_stdout, score_time, scorer_stderr = score_translations(
                 compute_score_path=args.scorer,
                 translations_text=translations,
+                input_path=args.input,
+                num_sents=args.num_sents,
                 verbose=args.verbose,
                 py=args.python,
                 timeout=args.score_timeout
@@ -184,8 +202,10 @@ def main():
     results_sorted = sorted(results, key=lambda x: x["total_logprob"], reverse=True)
     print("\n=== TOP configs (by total logprob) ===")
     for r in results_sorted[:args.topk]:
+        decode_time = f"{r['decode_time_sec']:.2f}" if r['decode_time_sec'] is not None else "-1"
+        score_time = f"{r['score_time_sec']:.2f}" if r['score_time_sec'] is not None else "-1"
         print(f"total={r['total_logprob']:.6f} | k={r['k']} s={r['stack_size']} r={r['reorder_limit']} a={r['dist_alpha']} "
-              f"| decode={r['decode_time_sec']:.2f if r['decode_time_sec'] else -1}s score={r['score_time_sec']:.2f if r['score_time_sec'] else -1}s")
+              f"| decode={decode_time}s score={score_time}s")
 
     # 保存 JSON
     try:

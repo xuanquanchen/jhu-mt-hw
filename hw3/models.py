@@ -5,11 +5,11 @@ from collections import namedtuple
 
 # A translation model is a dictionary where keys are tuples of French words
 # and values are lists of (english, logprob) named tuples. For instance,
-# the French phrase "que se est" has two translations, represented like so:
+# the French phrase "que se est" has two translations_beamsearch, represented like so:
 # tm[('que', 'se', 'est')] = [
 #   phrase(english='what has', logprob=-0.301030009985), 
 #   phrase(english='what has been', logprob=-0.301030009985)]
-# k is a pruning parameter: only the top k translations are kept for each f.
+# k is a pruning parameter: only the top k translations_beamsearch are kept for each f.
 phrase = namedtuple("phrase", "english, logprob")
 def TM(filename, k):
   sys.stderr.write("Reading translation model from %s...\n" % (filename,))
@@ -17,7 +17,7 @@ def TM(filename, k):
   for line in open(filename).readlines():
     (f, e, logprob) = line.strip().split(" ||| ")
     tm.setdefault(tuple(f.split()), []).append(phrase(e, float(logprob)))
-  for f in tm: # prune all but top k translations
+  for f in tm: # prune all but top k translations_beamsearch
     tm[f].sort(key=lambda x: -x.logprob)
     del tm[f][k:] 
   return tm

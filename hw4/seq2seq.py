@@ -346,7 +346,7 @@ def main():
                          'followed by "|||", followed by a target sentence' +
                          ' (for test, target is ignored)')
     ap.add_argument('--out_file', default='out.txt',
-                    help='output file for test translations')
+                    help='output file for test translations_beamsearch')
     ap.add_argument('--load_checkpoint', nargs=1,
                     help='checkpoint file to start from')
 

@@ -1,0 +1,74 @@
+[
+  {
+    "k": 3,
+    "stack_size": 100,
+    "reorder_limit": 2,
+    "dist_alpha": 0.1,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.4089820384979248,
+    "score_time_sec": 0.36722803115844727
+  },
+  {
+    "k": 3,
+    "stack_size": 100,
+    "reorder_limit": 2,
+    "dist_alpha": 0.2,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.38292407989501953,
+    "score_time_sec": 0.36534595489501953
+  },
+  {
+    "k": 3,
+    "stack_size": 200,
+    "reorder_limit": 2,
+    "dist_alpha": 0.1,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.40108489990234375,
+    "score_time_sec": 0.37375903129577637
+  },
+  {
+    "k": 3,
+    "stack_size": 200,
+    "reorder_limit": 2,
+    "dist_alpha": 0.2,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.38648080825805664,
+    "score_time_sec": 0.36872410774230957
+  },
+  {
+    "k": 5,
+    "stack_size": 100,
+    "reorder_limit": 2,
+    "dist_alpha": 0.1,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.44672298431396484,
+    "score_time_sec": 0.35071635246276855
+  },
+  {
+    "k": 5,
+    "stack_size": 100,
+    "reorder_limit": 2,
+    "dist_alpha": 0.2,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.44505810737609863,
+    "score_time_sec": 0.3480689525604248
+  },
+  {
+    "k": 5,
+    "stack_size": 200,
+    "reorder_limit": 2,
+    "dist_alpha": 0.1,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.4505629539489746,
+    "score_time_sec": 0.3688678741455078
+  },
+  {
+    "k": 5,
+    "stack_size": 200,
+    "reorder_limit": 2,
+    "dist_alpha": 0.2,
+    "total_logprob": -41.570245,
+    "decode_time_sec": 0.44103097915649414,
+    "score_time_sec": 0.3697988986968994
+  }
+]
