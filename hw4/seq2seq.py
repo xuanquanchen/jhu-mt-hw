@@ -253,8 +253,10 @@ class AttnDecoderRNN(nn.Module):
         """Initilize your word embedding, decoder LSTM, and weights needed for your attention here
         """
         "*** YOUR CODE HERE ***"
-        raise NotImplementedError
-
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.lstm = LSTM(hidden_size, hidden_size)
+        self.attn = nn.Linear(hidden_size, max_length)
+        self.attnCombine = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
 
     def forward(self, input, hidden, encoder_outputs):
@@ -265,8 +267,21 @@ class AttnDecoderRNN(nn.Module):
         """
         
         "*** YOUR CODE HERE ***"
-        raise NotImplementedError
-        return log_softmax, hidden, attn_weights
+        embedded = self.embedding(input)
+        embedded = self.dropout(embedded)
+
+        hiddenForward, cellForward = self.lstm(embedded, hidden)
+        attnScores = self.zeros(encoder_outputs.size(0))
+        for i in range(encoder_outputs.size(0)):
+            attnScores[i] = self.attn(hiddenForward).dot(encoder_outputs[i])
+        attn_weights = F.softmax(attnScores, dim=0) # apply softmax to attention weights
+        contextVector = torch.zeros(1, self.hidden_size)
+        for i in range(encoder_outputs.size(0)):
+            contextVector += attn_weights[i] * encoder_outputs[i]
+        contextVector = self.attnCombine(torch.cat([contextVector, hiddenForward], dim=1)) # combine context vector with hidden forward
+        log_softmax = F.log_softmax(attn_weights, dim=0)
+
+        return log_softmax, hiddenForward, attn_weights
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
