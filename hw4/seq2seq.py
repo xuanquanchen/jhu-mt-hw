@@ -297,10 +297,19 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
     decoder.train()
 
     "*** YOUR CODE HERE ***"
-    raise NotImplementedError
+    optimizer.zero_grad()
+    encoderOutputs = encoder(input_tensor, encoder_hidden)
+    decoderInput = torch.tensor([[SOS_index]], device=device)
+    decoderHidden = encoder_hidden
+    loss = 0
+    for decoderIndex in range(target_tensor.size(0)): # use target tensor as decoder input
+        decoderOutput, decoderHidden = decoder(decoderInput, decoderHidden, encoderOutputs)
+        loss += criterion(decoderOutput, target_tensor[decoderIndex])
+        decoderInput = target_tensor[decoderIndex]
+    loss.backward() # backpropagate the loss
+    optimizer.step()
 
     return loss.item() 
-
 
 
 ######################################################################
