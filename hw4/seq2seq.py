@@ -396,7 +396,23 @@ def show_attention(input_sentence, output_words, attentions):
     """
     
     "*** YOUR CODE HERE ***"
-    raise NotImplementedError
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111)
+    attentionMatrix = attentions.numpy()
+    inWords = input_sentence.split()
+    outWords = [word for word in output_words if word != ['SOS', 'EOS']]
+    # ax.matshow(attentionMatrix, cmap='viridis')
+    ax.set_xticklabels([''] + inWords, rotation=90)
+    ax.set_yticklabels([''] + outWords)
+    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+
+    ax.set_xlabel('Source Words')
+    ax.set_ylabel('Target Words')
+    ax.set_title('Attention Weights')
+
+    plt.savefig('attentionPlot.png', dpi=300, bbox_inches='tight')
+    plt.show()
 
 
 def translate_and_show_attention(input_sentence, encoder1, decoder1, src_vocab, tgt_vocab):
@@ -443,7 +459,7 @@ def main():
                     help='test file. each line should have a source sentence,' +
                          'followed by "|||", followed by a target sentence' +
                          ' (for test, target is ignored)')
-    ap.add_argument('--out_file', default='out.txt',
+    ap.add_argument('--out_file', default='translations',
                     help='output file for test translations_beamsearch')
     ap.add_argument('--load_checkpoint', nargs=1,
                     help='checkpoint file to start from')
