@@ -255,7 +255,7 @@ class AttnDecoderRNN(nn.Module):
         "*** YOUR CODE HERE ***"
         self.embedding = nn.Embedding(output_size, hidden_size)
         self.lstm = LSTM(hidden_size, hidden_size)
-        self.attn = nn.Linear(hidden_size, max_length)
+        self.attn = nn.Linear(hidden_size, 1)
         self.attnCombine = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
 
@@ -271,17 +271,18 @@ class AttnDecoderRNN(nn.Module):
         embedded = self.dropout(embedded)
 
         hiddenForward, cellForward = self.lstm(embedded, hidden)
-        attnScores = self.zeros(encoder_outputs.size(0))
+        attnScores = torch.zeros(encoder_outputs.size(0), device=device)
         for i in range(encoder_outputs.size(0)):
-            attnScores[i] = self.attn(hiddenForward).dot(encoder_outputs[i])
+            attnScores[i] = torch.sum(self.attn(hiddenForward) * encoder_outputs[i])
         attn_weights = F.softmax(attnScores, dim=0) # apply softmax to attention weights
-        contextVector = torch.zeros(1, self.hidden_size)
+        contextVector = torch.zeros(1, self.hidden_size, device=device)
         for i in range(encoder_outputs.size(0)):
             contextVector += attn_weights[i] * encoder_outputs[i]
-        contextVector = self.attnCombine(torch.cat([contextVector, hiddenForward], dim=1)) # combine context vector with hidden forward
-        log_softmax = F.log_softmax(attn_weights, dim=0)
+        contextVector = self.attnCombine(torch.cat([contextVector, hiddenForward.squeeze(0)], dim=1)) # combine context vector with hidden forward
+        output = self.out(contextVector)
+        log_softmax = F.log_softmax(output, dim=1)
 
-        return log_softmax, hiddenForward, attn_weights
+        return log_softmax, (hiddenForward, cellForward), attn_weights
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -298,12 +299,13 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     "*** YOUR CODE HERE ***"
     optimizer.zero_grad()
-    encoderOutputs = encoder(input_tensor, encoder_hidden)
+    encoderOutputs, _ = encoder(input_tensor, encoder_hidden)
     decoderInput = torch.tensor([[SOS_index]], device=device)
     decoderHidden = encoder_hidden
+    decoderCell = torch.zeros(1, encoder.hidden_size, device=device)
     loss = 0
     for decoderIndex in range(target_tensor.size(0)): # use target tensor as decoder input
-        decoderOutput, decoderHidden = decoder(decoderInput, decoderHidden, encoderOutputs)
+        decoderOutput, (decoderHidden, decoderCell), _ = decoder(decoderInput, (decoderHidden, decoderCell), encoderOutputs)
         loss += criterion(decoderOutput, target_tensor[decoderIndex])
         decoderInput = target_tensor[decoderIndex]
     loss.backward() # backpropagate the loss
@@ -459,7 +461,7 @@ def main():
                     help='test file. each line should have a source sentence,' +
                          'followed by "|||", followed by a target sentence' +
                          ' (for test, target is ignored)')
-    ap.add_argument('--out_file', default='translations',
+    ap.add_argument('--out_file', default='translations', # changed from out.txt to translations
                     help='output file for test translations_beamsearch')
     ap.add_argument('--load_checkpoint', nargs=1,
                     help='checkpoint file to start from')
