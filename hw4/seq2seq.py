@@ -37,7 +37,7 @@ logging.basicConfig(level=logging.DEBUG,
 # we are forcing the use of cpu, if you have access to a gpu, you can set the flag to "cuda"
 # make sure you are very careful if you are using a gpu on a shared cluster/grid, 
 # it can be very easy to confict with other people's jobs.
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
 
 SOS_token = "<SOS>"
@@ -133,7 +133,43 @@ def tensors_from_pair(src_vocab, tgt_vocab, pair):
 
 
 ######################################################################
+# Long Short-Term Memory (LSTM)
+class LSTM(nn.Module): 
+    def __init__(self, input_size, hidden_size):
+        super(LSTM, self).__init__()
+        self.hidden_size = hidden_size
+        self.input_size = input_size
+# input gate weight
+        self.input_inputGate = nn.Linear(input_size, hidden_size)
+        self.hidden_inputGate = nn.Linear(hidden_size, hidden_size)
 
+# output gate weight
+        self.output_outputGate = nn.Linear(input_size, hidden_size)
+        self.hidden_outputGate = nn.Linear(hidden_size, hidden_size)
+
+# forget gate weight
+        self.forget_forgetGate = nn.Linear(input_size, hidden_size)
+        self.hidden_forgetGate = nn.Linear(hidden_size, hidden_size)
+
+# cell gate weight (candidate values)
+        self.input_cellGate = nn.Linear(input_size, hidden_size)
+        self.hidden_cellGate = nn.Linear(hidden_size, hidden_size)
+
+    def forward(self, input, hidden):
+        prevHiddenState, prevCellState = hidden
+        
+        inputGate = torch.sigmoid(self.input_inputGate(input) + self.hidden_inputGate(prevHiddenState)) 
+        forgetGate = torch.sigmoid(self.forget_forgetGate(input) + self.hidden_forgetGate(prevHiddenState)) 
+        cellGate = torch.tanh(self.input_cellGate(input) + self.hidden_cellGate(prevHiddenState))
+        outputGate = torch.sigmoid(self.output_outputGate(input) + self.hidden_outputGate(prevHiddenState))
+        
+        # update cell state
+        currentCellState = forgetGate * prevCellState + inputGate * cellGate
+        
+        # update hidden state
+        currentHiddenState = outputGate * torch.tanh(currentCellState)
+        
+        return currentCellState, currentHiddenState
 
 class EncoderRNN(nn.Module):
     """the class for the enoder RNN
@@ -145,20 +181,58 @@ class EncoderRNN(nn.Module):
         For this assignment, you should *NOT* use nn.LSTM. 
         Instead, you should implement the equations yourself.
         See, for example, https://en.wikipedia.org/wiki/Long_short-term_memory#LSTM_with_a_forget_gate
-        You should make your LSTM modular and re-use it in the Decoder.
+        [DONE] You should make your LSTM modular and re-use it in the Decoder.
         """
         "*** YOUR CODE HERE ***"
-        raise NotImplementedError
-        return output, hidden
-
+        # initialize word embedding layer
+        self.embedding = nn.Embedding(input_size, hidden_size)
+        # initialize bidirectional LSTM layer
+        self.lstm_forward = LSTM(hidden_size, hidden_size)
+        self.lstm_backward = LSTM(hidden_size, hidden_size)
+        # initialize linear layer
+        self.linear = nn.Linear(hidden_size * 2, hidden_size)
 
     def forward(self, input, hidden):
         """runs the forward pass of the encoder
         returns the output and the hidden state
         """
         "*** YOUR CODE HERE ***"
-        raise NotImplementedError
-        return output, hidden
+        # get word embeddings
+        embedded = self.embedding(input)  # [seq_len, 1, hidden_size]
+        
+        # initialize hidden states for forward and backward to zeros
+        hiddenForward = torch.zeros(1, self.hidden_size)
+        cellForward = torch.zeros(1, self.hidden_size)
+        hiddenBackward = torch.zeros(1, self.hidden_size)
+        cellBackward = torch.zeros(1, self.hidden_size)
+        
+        # forward pass
+        forwardOutputs = []
+        for i in range(input.size(0)):
+            hiddenForward, cellForward = self.lstm_forward(embedded[i], (hiddenForward, cellForward))
+            forwardOutputs.append(hiddenForward)
+        
+        # backward pass
+        backwardOutputs = []
+        for i in range(input.size(0) - 1, -1, -1):
+            hiddenBackward, cellBackward = self.lstm_backward(embedded[i], (hiddenBackward, cellBackward))
+            backwardOutputs.insert(0, hiddenBackward)
+        
+        # combine forward and backward outputs
+        outputs = []
+        for i in range(input.size(0)):
+            combined = torch.cat([forwardOutputs[i], backwardOutputs[i]], dim=1)
+            output = self.linear(combined)
+            outputs.append(output)
+        
+        # stack outputs: [seq_len, 1, hidden_size]
+        encoderOutputs = torch.stack(outputs, dim=0)
+        
+        # concatenated forward and backward hidden states
+        finalHidden = torch.cat([hiddenForward, hiddenBackward], dim=1)
+        finalHidden = self.linear(finalHidden)
+        
+        return encoderOutputs, finalHidden
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
