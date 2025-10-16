@@ -203,6 +203,11 @@ class EncoderRNN(nn.Module):
         embedded = self.embedding(input)  # [seq_len, 1, hidden_size]
         embedded = self.dropout(embedded)
         
+        if embedded.dim() == 2:
+            embedded = embedded.unsqueeze(1)  # add batch dimension if not present
+            
+        seq_len = embedded.size(0)
+        
         # initialize hidden states for forward and backward to zeros
         hiddenForward = torch.zeros(1, self.hidden_size, device=device)
         cellForward = torch.zeros(1, self.hidden_size, device=device)
@@ -211,19 +216,19 @@ class EncoderRNN(nn.Module):
         
         # forward pass
         forwardOutputs = []
-        for i in range(input.size(0)):
+        for i in range(seq_len):
             hiddenForward, cellForward = self.lstm_forward(embedded[i], (hiddenForward, cellForward))
             forwardOutputs.append(hiddenForward)
         
         # backward pass
         backwardOutputs = []
-        for i in range(input.size(0) - 1, -1, -1):
+        for i in range(seq_len - 1, -1, -1):
             hiddenBackward, cellBackward = self.lstm_backward(embedded[i], (hiddenBackward, cellBackward))
             backwardOutputs.insert(0, hiddenBackward)
         
         # combine forward and backward outputs
         outputs = []
-        for i in range(input.size(0)):
+        for i in range(seq_len):
             combined = torch.cat([forwardOutputs[i], backwardOutputs[i]], dim=1)
             output = self.linear(combined)
             outputs.append(output)
@@ -231,13 +236,16 @@ class EncoderRNN(nn.Module):
         # stack outputs: [seq_len, 1, hidden_size]
         encoderOutputs = torch.stack(outputs, dim=0)
         
-        # concatenated forward and backward hidden states
-        finalHidden = torch.cat([hiddenForward, hiddenBackward], dim=1)
-        finalHidden = self.linear(finalHidden)
-        finalCell = torch.cat([cellForward, cellBackward], dim=1)
-        finalCell = self.linear(finalCell)
-        
-        return encoderOutputs, (finalHidden, finalCell)
+        if seq_len == 1:
+            return encoderOutputs, (hiddenForward, cellForward)
+        else:
+            # concatenated forward and backward hidden states
+            finalHidden = torch.cat([hiddenForward, hiddenBackward], dim=1)
+            finalHidden = self.linear(finalHidden)
+            finalCell = torch.cat([cellForward, cellBackward], dim=1)
+            finalCell = self.linear(finalCell)
+            
+            return encoderOutputs, (finalHidden, finalCell)
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -310,17 +318,24 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     "*** YOUR CODE HERE ***"
     optimizer.zero_grad()
-    encoderOutputs, (encoderHidden, encoderCell) = encoder(input_tensor, encoder_hidden)
+    encoder_outputs = torch.zeros(MAX_LENGTH, encoder.hidden_size, device=device)
+    for ei in range(input_tensor.size(0)):
+        encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
+        encoder_outputs[ei] = encoder_output.squeeze(0).squeeze(0)
+    encoder_cell = encoder_hidden[1]
+    encoder_hidden = encoder_hidden[0]
+
     decoderInput = torch.tensor([[SOS_index]], device=device)
-    decoderHidden, decoderCell = encoderHidden, encoderCell
+    decoderHidden, decoderCell = encoder_hidden, encoder_cell
+    
     loss = 0
-    use_teacher_forcing = random.random() < 0.5 # teacher forcing by ratio 0.5
-    for decoderIndex in range(target_tensor.size(0)): # use target tensor as decoder input
-        decoderOutput, (decoderHidden, decoderCell), _ = decoder(decoderInput, (decoderHidden, decoderCell), encoderOutputs)
+    use_teacher_forcing = random.random() < 0.5
+    for decoderIndex in range(target_tensor.size(0)):
+        decoderOutput, (decoderHidden, decoderCell), _ = decoder(
+            decoderInput, (decoderHidden, decoderCell), encoder_outputs)
         loss += criterion(decoderOutput, target_tensor[decoderIndex])
-        
         if use_teacher_forcing:
-            decoderInput = target_tensor[decoderIndex]
+            decoderInput = target_tensor[decoderIndex].unsqueeze(0)
         else:
             topv, topi = decoderOutput.topk(1)
             decoderInput = topi.detach()
@@ -372,7 +387,7 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
             else:
                 decoded_words.append(tgt_vocab.index2word[topi.item()])
 
-            decoder_input = topi.squeeze().detach()
+            decoder_input = topi.detach()
 
         return decoded_words, decoder_attentions[:di + 1]
 
@@ -419,7 +434,7 @@ def show_attention(input_sentence, output_words, attentions):
     ax = fig.add_subplot(111)
     attentionMatrix = attentions.numpy()
     inWords = input_sentence.split()
-    outWords = [word for word in output_words if word != ['SOS', 'EOS']]
+    outWords = [word for word in output_words if word not in {SOS_token, EOS_token}]
     # ax.matshow(attentionMatrix, cmap='viridis')
     ax.set_xticklabels([''] + inWords, rotation=90)
     ax.set_yticklabels([''] + outWords)
