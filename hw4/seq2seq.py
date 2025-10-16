@@ -267,6 +267,12 @@ class AttnDecoderRNN(nn.Module):
         """
         
         "*** YOUR CODE HERE ***"
+        # fix translate bug when hidden is a tensor
+        if isinstance(hidden, torch.Tensor):
+            prevHiddenState = hidden
+            prevCellState = torch.zeros_like(hidden, device=device)
+            hidden = (prevHiddenState, prevCellState)
+        
         embedded = self.embedding(input)
         embedded = self.dropout(embedded)
 
@@ -304,10 +310,17 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
     decoderHidden = encoderHidden
     decoderCell = torch.zeros(1, encoder.hidden_size, device=device)
     loss = 0
+    use_teacher_forcing = random.random() < 0.5 # teacher forcing by ratio 0.5
     for decoderIndex in range(target_tensor.size(0)): # use target tensor as decoder input
         decoderOutput, (decoderHidden, decoderCell), _ = decoder(decoderInput, (decoderHidden, decoderCell), encoderOutputs)
         loss += criterion(decoderOutput, target_tensor[decoderIndex])
-        decoderInput = target_tensor[decoderIndex]
+        
+        if use_teacher_forcing:
+            decoderInput = target_tensor[decoderIndex]
+        else:
+            topv, topi = decoderOutput.topk(1)
+            decoderInput = topi.detach()
+            
     loss.backward() # backpropagate the loss
     optimizer.step()
 
