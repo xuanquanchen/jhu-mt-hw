@@ -21,7 +21,7 @@ import matplotlib
 #if you are running on the gradx/ugradx/ another cluster, 
 #you will need the following line
 #if you run on a local machine, you can comment it out
-matplotlib.use('agg') 
+#matplotlib.use('agg') 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import torch
@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.DEBUG,
 # make sure you are very careful if you are using a gpu on a shared cluster/grid, 
 # it can be very easy to confict with other people's jobs.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = torch.device("cpu")
+#device = torch.device("cpu")
 
 SOS_token = "<SOS>"
 EOS_token = "<EOS>"
@@ -169,7 +169,7 @@ class LSTM(nn.Module):
         # update hidden state
         currentHiddenState = outputGate * torch.tanh(currentCellState)
         
-        return currentCellState, currentHiddenState
+        return currentHiddenState, currentCellState
 
 class EncoderRNN(nn.Module):
     """the class for the enoder RNN
@@ -201,10 +201,10 @@ class EncoderRNN(nn.Module):
         embedded = self.embedding(input)  # [seq_len, 1, hidden_size]
         
         # initialize hidden states for forward and backward to zeros
-        hiddenForward = torch.zeros(1, self.hidden_size)
-        cellForward = torch.zeros(1, self.hidden_size)
-        hiddenBackward = torch.zeros(1, self.hidden_size)
-        cellBackward = torch.zeros(1, self.hidden_size)
+        hiddenForward = torch.zeros(1, self.hidden_size, device=device)
+        cellForward = torch.zeros(1, self.hidden_size, device=device)
+        hiddenBackward = torch.zeros(1, self.hidden_size, device=device)
+        cellBackward = torch.zeros(1, self.hidden_size, device=device)
         
         # forward pass
         forwardOutputs = []
@@ -255,7 +255,7 @@ class AttnDecoderRNN(nn.Module):
         "*** YOUR CODE HERE ***"
         self.embedding = nn.Embedding(output_size, hidden_size)
         self.lstm = LSTM(hidden_size, hidden_size)
-        self.attn = nn.Linear(hidden_size, 1)
+        self.attn = nn.Linear(hidden_size, hidden_size, bias=False)
         self.attnCombine = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
 
@@ -299,9 +299,9 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     "*** YOUR CODE HERE ***"
     optimizer.zero_grad()
-    encoderOutputs, _ = encoder(input_tensor, encoder_hidden)
+    encoderOutputs, encoderHidden = encoder(input_tensor, encoder_hidden)
     decoderInput = torch.tensor([[SOS_index]], device=device)
-    decoderHidden = encoder_hidden
+    decoderHidden = encoderHidden
     decoderCell = torch.zeros(1, encoder.hidden_size, device=device)
     loss = 0
     for decoderIndex in range(target_tensor.size(0)): # use target tensor as decoder input
