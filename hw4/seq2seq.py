@@ -38,6 +38,7 @@ logging.basicConfig(level=logging.DEBUG,
 # make sure you are very careful if you are using a gpu on a shared cluster/grid, 
 # it can be very easy to confict with other people's jobs.
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print('using device:', device)
 #device = torch.device("cpu")
 
 SOS_token = "<SOS>"
@@ -191,6 +192,7 @@ class EncoderRNN(nn.Module):
         self.lstm_backward = LSTM(hidden_size, hidden_size)
         # initialize linear layer
         self.linear = nn.Linear(hidden_size * 2, hidden_size)
+        self.dropout = nn.Dropout(0.1)
 
     def forward(self, input, hidden):
         """runs the forward pass of the encoder
@@ -199,6 +201,7 @@ class EncoderRNN(nn.Module):
         "*** YOUR CODE HERE ***"
         # get word embeddings
         embedded = self.embedding(input)  # [seq_len, 1, hidden_size]
+        embedded = self.dropout(embedded)
         
         # initialize hidden states for forward and backward to zeros
         hiddenForward = torch.zeros(1, self.hidden_size, device=device)
@@ -231,8 +234,10 @@ class EncoderRNN(nn.Module):
         # concatenated forward and backward hidden states
         finalHidden = torch.cat([hiddenForward, hiddenBackward], dim=1)
         finalHidden = self.linear(finalHidden)
+        finalCell = torch.cat([cellForward, cellBackward], dim=1)
+        finalCell = self.linear(finalCell)
         
-        return encoderOutputs, finalHidden
+        return encoderOutputs, (finalHidden, finalCell)
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -277,10 +282,12 @@ class AttnDecoderRNN(nn.Module):
         embedded = self.dropout(embedded)
 
         hiddenForward, cellForward = self.lstm(embedded, hidden)
-        attnScores = torch.zeros(encoder_outputs.size(0), device=device)
-        for i in range(encoder_outputs.size(0)):
-            attnScores[i] = torch.sum(self.attn(hiddenForward) * encoder_outputs[i])
-        attn_weights = F.softmax(attnScores, dim=0) # apply softmax to attention weights
+        keys = encoder_outputs.squeeze(1)  # [seq_len, hidden_size]
+        query= self.attn(hiddenForward).squeeze(1)       
+        
+        attnScores = torch.mv(keys, query)
+        attn_weights = F.softmax(attnScores, dim=0)
+
         contextVector = torch.zeros(1, self.hidden_size, device=device)
         for i in range(encoder_outputs.size(0)):
             contextVector += attn_weights[i] * encoder_outputs[i]
@@ -305,10 +312,9 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     "*** YOUR CODE HERE ***"
     optimizer.zero_grad()
-    encoderOutputs, encoderHidden = encoder(input_tensor, encoder_hidden)
+    encoderOutputs, (encoderHidden, encoderCell) = encoder(input_tensor, encoder_hidden)
     decoderInput = torch.tensor([[SOS_index]], device=device)
-    decoderHidden = encoderHidden
-    decoderCell = torch.zeros(1, encoder.hidden_size, device=device)
+    decoderHidden, decoderCell = encoderHidden, encoderCell
     loss = 0
     use_teacher_forcing = random.random() < 0.5 # teacher forcing by ratio 0.5
     for decoderIndex in range(target_tensor.size(0)): # use target tensor as decoder input
@@ -458,7 +464,7 @@ def main():
                     help='print loss info every this many training examples')
     ap.add_argument('--checkpoint_every', default=10000, type=int,
                     help='write out checkpoint every this many training examples')
-    ap.add_argument('--initial_learning_rate', default=0.001, type=int,
+    ap.add_argument('--initial_learning_rate', default=0.001, type=float,
                     help='initial learning rate')
     ap.add_argument('--src_lang', default='fr',
                     help='Source (input) language code, e.g. "fr"')
