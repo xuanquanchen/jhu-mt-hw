@@ -278,20 +278,18 @@ class AttnDecoderRNN(nn.Module):
             prevCellState = torch.zeros_like(hidden, device=device)
             hidden = (prevHiddenState, prevCellState)
         
-        embedded = self.embedding(input)
+        embedded = self.embedding(input).squeeze(1)
         embedded = self.dropout(embedded)
 
         hiddenForward, cellForward = self.lstm(embedded, hidden)
         keys = encoder_outputs.squeeze(1)  # [seq_len, hidden_size]
-        query= self.attn(hiddenForward).squeeze(1)       
+        query= self.attn(hiddenForward).squeeze(0)       
         
         attnScores = torch.mv(keys, query)
         attn_weights = F.softmax(attnScores, dim=0)
 
-        contextVector = torch.zeros(1, self.hidden_size, device=device)
-        for i in range(encoder_outputs.size(0)):
-            contextVector += attn_weights[i] * encoder_outputs[i]
-        contextVector = self.attnCombine(torch.cat([contextVector, hiddenForward.squeeze(0)], dim=1)) # combine context vector with hidden forward
+        contextVector = torch.mm(attn_weights.unsqueeze(0), keys)
+        contextVector = self.attnCombine(torch.cat([contextVector, hiddenForward], dim=1)) # combine context vector with hidden forward
         output = self.out(contextVector)
         log_softmax = F.log_softmax(output, dim=1)
 
