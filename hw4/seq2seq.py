@@ -28,7 +28,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from nltk.translate.bleu_score import corpus_bleu
-from torch import optim
+from torch import dropout, optim
 
 
 logging.basicConfig(level=logging.DEBUG,
@@ -155,20 +155,28 @@ class LSTM(nn.Module):
 # cell gate weight (candidate values)
         self.input_cellGate = nn.Linear(input_size, hidden_size)
         self.hidden_cellGate = nn.Linear(hidden_size, hidden_size)
+        
+        # normalization layers
+        self.norm_i = nn.LayerNorm(hidden_size)
+        self.norm_f = nn.LayerNorm(hidden_size)
+        self.norm_o = nn.LayerNorm(hidden_size)
+        self.norm_c = nn.LayerNorm(hidden_size)
+        self.norm_h = nn.LayerNorm(hidden_size)
 
     def forward(self, input, hidden):
         prevHiddenState, prevCellState = hidden
         
-        inputGate = torch.sigmoid(self.input_inputGate(input) + self.hidden_inputGate(prevHiddenState)) 
-        forgetGate = torch.sigmoid(self.forget_forgetGate(input) + self.hidden_forgetGate(prevHiddenState)) 
-        cellGate = torch.tanh(self.input_cellGate(input) + self.hidden_cellGate(prevHiddenState))
-        outputGate = torch.sigmoid(self.output_outputGate(input) + self.hidden_outputGate(prevHiddenState))
+        inputGate = torch.sigmoid(self.norm_i(self.input_inputGate(input) + self.hidden_inputGate(prevHiddenState)))
+        forgetGate = torch.sigmoid(self.norm_f(self.forget_forgetGate(input) + self.hidden_forgetGate(prevHiddenState)))
+        cellGate = torch.tanh(self.norm_c(self.input_cellGate(input) + self.hidden_cellGate(prevHiddenState)))
+        outputGate = torch.sigmoid(self.norm_o(self.output_outputGate(input) + self.hidden_outputGate(prevHiddenState)))
+
         
         # update cell state
         currentCellState = forgetGate * prevCellState + inputGate * cellGate
         
         # update hidden state
-        currentHiddenState = outputGate * torch.tanh(currentCellState)
+        currentHiddenState = self.norm_h(outputGate * torch.tanh(currentCellState))
         
         return currentHiddenState, currentCellState
 
@@ -191,7 +199,9 @@ class EncoderRNN(nn.Module):
         self.lstm_forward = LSTM(hidden_size, hidden_size)
         self.lstm_backward = LSTM(hidden_size, hidden_size)
         # initialize linear layer
-        self.linear = nn.Linear(hidden_size * 2, hidden_size)
+        self.fc_hidden = nn.Linear(hidden_size * 2, hidden_size)
+        self.fc_cell = nn.Linear(hidden_size * 2, hidden_size)
+
         self.dropout = nn.Dropout(0.1)
 
     def forward(self, input, hidden):
@@ -230,8 +240,10 @@ class EncoderRNN(nn.Module):
         outputs = []
         for i in range(seq_len):
             combined = torch.cat([forwardOutputs[i], backwardOutputs[i]], dim=1)
-            output = self.linear(combined)
+            output = self.fc_hidden(combined)
+            output = F.layer_norm(output, output.shape[-1:])
             outputs.append(output)
+            output = F.dropout(output, p=0.1, training=self.training)
         
         # stack outputs: [seq_len, 1, hidden_size]
         encoderOutputs = torch.stack(outputs, dim=0)
@@ -241,9 +253,11 @@ class EncoderRNN(nn.Module):
         else:
             # concatenated forward and backward hidden states
             finalHidden = torch.cat([hiddenForward, hiddenBackward], dim=1)
-            finalHidden = self.linear(finalHidden)
+            finalHidden = F.layer_norm(self.fc_hidden(torch.cat([hiddenForward, hiddenBackward], dim=1)),
+                self.fc_hidden(torch.cat([hiddenForward, hiddenBackward], dim=1)).shape[-1:])
             finalCell = torch.cat([cellForward, cellBackward], dim=1)
-            finalCell = self.linear(finalCell)
+            finalCell = F.layer_norm(self.fc_cell(torch.cat([cellForward, cellBackward], dim=1)),
+                self.fc_cell(torch.cat([cellForward, cellBackward], dim=1)).shape[-1:])
             
             return encoderOutputs, (finalHidden, finalCell)
 
@@ -291,15 +305,21 @@ class AttnDecoderRNN(nn.Module):
 
         hiddenForward, cellForward = self.lstm(embedded, hidden)
         keys = encoder_outputs.squeeze(1)  # [seq_len, hidden_size]
-        query= self.attn(hiddenForward).squeeze(0)       
+        query = hiddenForward.squeeze(0)  # [hidden_size]
         
-        attnScores = torch.mv(keys, query)
-        attn_weights = F.softmax(attnScores, dim=0)
+        energy = torch.tanh(self.attn(keys))
+        attn_scores = torch.matmul(energy, query.unsqueeze(1))  # [seq_len]
+        attn_weights = F.softmax(attn_scores.squeeze(1), dim=0)
+        
+        context = torch.sum(attn_weights.unsqueeze(1) * keys, dim=0, keepdim=True)  # [1, hidden]
 
-        contextVector = torch.mm(attn_weights.unsqueeze(0), keys)
-        contextVector = self.attnCombine(torch.cat([contextVector, hiddenForward], dim=1)) # combine context vector with hidden forward
-        output = self.out(contextVector)
-        log_softmax = F.log_softmax(output, dim=1)
+        # Combine context and current hidden
+        combined = torch.cat([context, hiddenForward], dim=1)
+        output = self.attnCombine(combined)
+        output = F.layer_norm(output, output.shape[-1:])
+        output = torch.tanh(output)
+        output = F.dropout(output, p=self.dropout_p, training=self.training)
+        log_softmax = F.log_softmax(self.out(output), dim=1)
 
         return log_softmax, (hiddenForward, cellForward), attn_weights
 
@@ -329,18 +349,22 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
     decoderHidden, decoderCell = encoder_hidden, encoder_cell
     
     loss = 0
-    use_teacher_forcing = random.random() < 0.5
+    use_teacher_forcing = random.random() < 0.75
+
     for decoderIndex in range(target_tensor.size(0)):
         decoderOutput, (decoderHidden, decoderCell), _ = decoder(
             decoderInput, (decoderHidden, decoderCell), encoder_outputs)
         loss += criterion(decoderOutput, target_tensor[decoderIndex])
+    
         if use_teacher_forcing:
-            decoderInput = target_tensor[decoderIndex].unsqueeze(0)
+            decoderInput = target_tensor[decoderIndex].view(1, 1)
         else:
             topv, topi = decoderOutput.topk(1)
-            decoderInput = topi.detach()
-            
-    loss.backward() # backpropagate the loss
+            decoderInput = topi.detach().view(1, 1).long()
+
+    # backward + clip gradients
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(list(encoder.parameters()) + list(decoder.parameters()), 1.0)
     optimizer.step()
 
     return loss.item() 
@@ -435,7 +459,7 @@ def show_attention(input_sentence, output_words, attentions):
     attentionMatrix = attentions.numpy()
     inWords = input_sentence.split()
     outWords = [word for word in output_words if word not in {SOS_token, EOS_token}]
-    # ax.matshow(attentionMatrix, cmap='viridis')
+    ax.matshow(attentionMatrix, cmap='viridis')
     ax.set_xticklabels([''] + inWords, rotation=90)
     ax.set_yticklabels([''] + outWords)
     ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
