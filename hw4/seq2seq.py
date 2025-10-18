@@ -12,8 +12,10 @@ Students *MAY NOT* view the above tutorial or use it as a reference in any way.
 from __future__ import unicode_literals, print_function, division
 
 import argparse
+import imp
 import logging
 import random
+from torch.optim.lr_scheduler import StepLR
 import time
 from io import open
 
@@ -21,7 +23,8 @@ import matplotlib
 #if you are running on the gradx/ugradx/ another cluster, 
 #you will need the following line
 #if you run on a local machine, you can comment it out
-#matplotlib.use('agg') 
+#matplotlib.use('agg')
+import math
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import torch
@@ -197,13 +200,15 @@ class EncoderRNN(nn.Module):
         # initialize word embedding layer
         self.embedding = nn.Embedding(input_size, hidden_size)
         # initialize bidirectional LSTM layer
-        self.lstm_forward = LSTM(hidden_size, hidden_size)
-        self.lstm_backward = LSTM(hidden_size, hidden_size)
+        self.lstm_forward1 = LSTM(hidden_size, hidden_size)
+        self.lstm_forward2 = LSTM(hidden_size, hidden_size)
+        self.lstm_backward1 = LSTM(hidden_size, hidden_size)
+        self.lstm_backward2 = LSTM(hidden_size, hidden_size)
         # initialize linear layer
         self.fc_hidden = nn.Linear(hidden_size * 2, hidden_size)
         self.fc_cell = nn.Linear(hidden_size * 2, hidden_size)
 
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(0.3)
 
     def forward(self, input, hidden):
         """runs the forward pass of the encoder
@@ -220,47 +225,48 @@ class EncoderRNN(nn.Module):
         seq_len = embedded.size(0)
         
         # initialize hidden states for forward and backward to zeros
-        hiddenForward = torch.zeros(1, self.hidden_size, device=device)
-        cellForward = torch.zeros(1, self.hidden_size, device=device)
-        hiddenBackward = torch.zeros(1, self.hidden_size, device=device)
-        cellBackward = torch.zeros(1, self.hidden_size, device=device)
+        hf1 = torch.zeros(1, self.hidden_size, device=device)
+        cf1 = torch.zeros(1, self.hidden_size, device=device)
+        hf2 = torch.zeros(1, self.hidden_size, device=device)
+        cf2 = torch.zeros(1, self.hidden_size, device=device)
+
+        hb1 = torch.zeros(1, self.hidden_size, device=device)
+        cb1 = torch.zeros(1, self.hidden_size, device=device)
+        hb2 = torch.zeros(1, self.hidden_size, device=device)
+        cb2 = torch.zeros(1, self.hidden_size, device=device)
         
         # forward pass
         forwardOutputs = []
         for i in range(seq_len):
-            hiddenForward, cellForward = self.lstm_forward(embedded[i], (hiddenForward, cellForward))
-            forwardOutputs.append(hiddenForward)
+            hf1, cf1 = self.lstm_forward1(embedded[i], (hf1, cf1))
+            hf2, cf2 = self.lstm_forward2(hf1, (hf2, cf2))
+            forwardOutputs.append(hf2)
         
         # backward pass
         backwardOutputs = []
         for i in range(seq_len - 1, -1, -1):
-            hiddenBackward, cellBackward = self.lstm_backward(embedded[i], (hiddenBackward, cellBackward))
-            backwardOutputs.insert(0, hiddenBackward)
+            hb1, cb1 = self.lstm_backward1(embedded[i], (hb1, cb1))
+            hb2, cb2 = self.lstm_backward2(hb1, (hb2, cb2))
+            backwardOutputs.insert(0, hb2)
         
         # combine forward and backward outputs
         outputs = []
         for i in range(seq_len):
-            combined = torch.cat([forwardOutputs[i], backwardOutputs[i]], dim=1)
-            output = self.fc_hidden(combined)
-            output = F.layer_norm(output, output.shape[-1:])
-            outputs.append(output)
-            output = F.dropout(output, p=0.1, training=self.training)
+            combined = torch.cat([forwardOutputs[i], backwardOutputs[i]], dim=1)  # [1, 2H]
+            out_i = self.fc_hidden(combined)                                      # [1, H]
+            out_i = F.layer_norm(out_i, out_i.shape[-1:])
+            out_i = F.dropout(out_i, p=0.1, training=self.training)
+            outputs.append(out_i)
         
         # stack outputs: [seq_len, 1, hidden_size]
         encoderOutputs = torch.stack(outputs, dim=0)
         
-        if seq_len == 1:
-            return encoderOutputs, (hiddenForward, cellForward)
-        else:
-            # concatenated forward and backward hidden states
-            finalHidden = torch.cat([hiddenForward, hiddenBackward], dim=1)
-            finalHidden = F.layer_norm(self.fc_hidden(torch.cat([hiddenForward, hiddenBackward], dim=1)),
-                self.fc_hidden(torch.cat([hiddenForward, hiddenBackward], dim=1)).shape[-1:])
-            finalCell = torch.cat([cellForward, cellBackward], dim=1)
-            finalCell = F.layer_norm(self.fc_cell(torch.cat([cellForward, cellBackward], dim=1)),
-                self.fc_cell(torch.cat([cellForward, cellBackward], dim=1)).shape[-1:])
-            
-            return encoderOutputs, (finalHidden, finalCell)
+        # concatenated forward and backward hidden states
+        finalHidden = torch.cat([hf2, hb2], dim=1)     # [1, 2H] → 线性到 H
+        finalHidden = F.layer_norm(self.fc_hidden(finalHidden), (self.hidden_size,))
+        finalCell   = torch.cat([cf2, cb2], dim=1)
+        finalCell   = F.layer_norm(self.fc_cell(finalCell),     (self.hidden_size,))           
+        return encoderOutputs, (finalHidden, finalCell)
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -269,7 +275,7 @@ class EncoderRNN(nn.Module):
 class AttnDecoderRNN(nn.Module):
     """the class for the decoder 
     """
-    def __init__(self, hidden_size, output_size, dropout_p=0.1, max_length=MAX_LENGTH):
+    def __init__(self, hidden_size, output_size, dropout_p=0.3, max_length=MAX_LENGTH):
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.output_size = output_size
@@ -283,7 +289,8 @@ class AttnDecoderRNN(nn.Module):
         "*** YOUR CODE HERE ***"
         self.embedding = nn.Embedding(output_size, hidden_size)
         self.lstm = LSTM(hidden_size, hidden_size)
-        self.attn = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.Wa = nn.Linear(hidden_size * 2, hidden_size)
+        self.va = nn.Linear(hidden_size, 1, bias=False)
         self.attnCombine = nn.Linear(hidden_size * 2, hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
 
@@ -306,11 +313,17 @@ class AttnDecoderRNN(nn.Module):
 
         hiddenForward, cellForward = self.lstm(embedded, hidden)
         keys = encoder_outputs.squeeze(1)  # [seq_len, hidden_size]
+        if encoder_outputs.dim() == 3:
+            keys = encoder_outputs.squeeze(1)
+        else:
+            keys = encoder_outputs  # [seq_len, hidden_size]
+            
         query = hiddenForward.squeeze(0)  # [hidden_size]
         
-        energy = torch.tanh(self.attn(keys))
-        attn_scores = torch.matmul(energy, query.unsqueeze(1))  # [seq_len]
-        attn_weights = F.softmax(attn_scores.squeeze(1), dim=0)
+        seq_len = encoder_outputs.size(0)
+        query_expanded = query.unsqueeze(0).expand(seq_len, -1)  # [seq_len, hidden]
+        attn_scores = torch.matmul(encoder_outputs.squeeze(1), query.unsqueeze(1)).squeeze(1) / math.sqrt(self.hidden_size)
+        attn_weights = F.softmax(attn_scores, dim=0)
         
         context = torch.sum(attn_weights.unsqueeze(1) * keys, dim=0, keepdim=True)  # [1, hidden]
 
@@ -320,9 +333,9 @@ class AttnDecoderRNN(nn.Module):
         output = F.layer_norm(output, output.shape[-1:])
         output = torch.tanh(output)
         output = F.dropout(output, p=self.dropout_p, training=self.training)
-        log_softmax = F.log_softmax(self.out(output), dim=1)
+        output_logits = self.out(output)
 
-        return log_softmax, (hiddenForward, cellForward), attn_weights
+        return output_logits, (hiddenForward, cellForward), attn_weights
 
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -330,7 +343,7 @@ class AttnDecoderRNN(nn.Module):
 
 ######################################################################
 
-def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, max_length=MAX_LENGTH):
+def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, tf_ratio, max_length=MAX_LENGTH):
     encoder_hidden = encoder.get_initial_hidden_state()
 
     # make sure the encoder and decoder are in training mode so dropout is applied
@@ -339,8 +352,9 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     "*** YOUR CODE HERE ***"
     optimizer.zero_grad()
-    encoder_outputs = torch.zeros(MAX_LENGTH, encoder.hidden_size, device=device)
-    for ei in range(input_tensor.size(0)):
+    input_len = input_tensor.size(0)
+    encoder_outputs = torch.zeros(input_len, encoder.hidden_size, device=device)
+    for ei in range(input_len):
         encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
         encoder_outputs[ei] = encoder_output.squeeze(0).squeeze(0)
     encoder_cell = encoder_hidden[1]
@@ -350,9 +364,10 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
     decoderHidden, decoderCell = encoder_hidden, encoder_cell
     
     loss = 0
-    use_teacher_forcing = random.random() < 0.75
+    use_teacher_forcing = random.random() < tf_ratio
+    target_len = target_tensor.size(0)
 
-    for decoderIndex in range(target_tensor.size(0)):
+    for decoderIndex in range(target_len):
         decoderOutput, (decoderHidden, decoderCell), _ = decoder(
             decoderInput, (decoderHidden, decoderCell), encoder_outputs)
         loss += criterion(decoderOutput, target_tensor[decoderIndex])
@@ -365,7 +380,7 @@ def train(input_tensor, target_tensor, encoder, decoder, optimizer, criterion, m
 
     # backward + clip gradients
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(list(encoder.parameters()) + list(decoder.parameters()), 1.0)
+    torch.nn.utils.clip_grad_norm_(list(encoder.parameters()) + list(decoder.parameters()), 5.0)
     optimizer.step()
 
     return loss.item() 
@@ -381,7 +396,7 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
     # switch the encoder and decoder to eval mode so they are not applying dropout
     encoder.eval()
     decoder.eval()
-
+    beam_size = 10
     with torch.no_grad():
         input_tensor = tensor_from_sentence(src_vocab, sentence)
         input_length = input_tensor.size()[0]
@@ -395,26 +410,46 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
             encoder_outputs[ei] += encoder_output[0, 0]
 
         decoder_input = torch.tensor([[SOS_index]], device=device)
-
         decoder_hidden = encoder_hidden
+        beams = [(0.0, [SOS_index], decoder_hidden, torch.zeros(max_length, max_length, device=device))]
 
-        decoded_words = []
-        decoder_attentions = torch.zeros(max_length, max_length)
+        completed = []
+        
+        for _ in range(max_length):
+            new_beams = []
+            for log_prob, seq, hidden, attn_history in beams:
+                if seq[-1] == EOS_index:
+                    completed.append((log_prob, seq, attn_history))
+                    continue
+                decoder_input = torch.tensor([[seq[-1]]], device=device)
+                decoder_output, decoder_hidden, decoder_attention = decoder(
+                    decoder_input, hidden, encoder_outputs)
+                
+                log_probs = F.log_softmax(decoder_output, dim=1)
+                topv, topi = log_probs.topk(beam_size)
 
-        for di in range(max_length):
-            decoder_output, decoder_hidden, decoder_attention = decoder(
-                decoder_input, decoder_hidden, encoder_outputs)
-            decoder_attentions[di] = decoder_attention.data
-            topv, topi = decoder_output.data.topk(1)
-            if topi.item() == EOS_index:
-                decoded_words.append(EOS_token)
-                break
-            else:
-                decoded_words.append(tgt_vocab.index2word[topi.item()])
+                for i in range(beam_size):
+                    next_token = topi[0][i].item()
+                    prob = topv[0][i].item()
+                    new_seq = seq + [next_token]
+                    length_penalty = ((5 + len(seq)) / 6)
+                    new_log_prob = (log_prob + prob - 0.2 * sum(attn_weights).mean().item()) / length_penalty
+                    new_attn = attn_history.clone()
+                    attn_len = min(new_attn.size(1), decoder_attention.size(0))
+                    new_attn[len(seq)-1, :attn_len] = decoder_attention[:attn_len]
+                    new_beams.append((new_log_prob, new_seq, decoder_hidden, new_attn))
+                    
+            beams = sorted(new_beams, key=lambda x: x[0], reverse=True)[:beam_size]
 
-            decoder_input = topi.detach()
+        if len(completed) == 0:
+            completed = beams
 
-        return decoded_words, decoder_attentions[:di + 1]
+        best = max(completed, key=lambda x: x[0])
+        best_seq = best[1]
+        decoded_words = [tgt_vocab.index2word[idx] for idx in best_seq[1:] if idx not in [EOS_index, SOS_index]]
+        attentions = best[2]
+        
+        return decoded_words, attentions
 
 
 ######################################################################
@@ -458,25 +493,29 @@ def show_attention(input_sentence, output_words, attentions):
     global attention_plot_counter
     fig = plt.figure(figsize=(12, 8))
     ax = fig.add_subplot(111)
-    attentionMatrix = attentions.numpy()
-    inWords = input_sentence.split()
-    outWords = [word for word in output_words if word not in {SOS_token, EOS_token}]
-    cax = ax.matshow(attentionMatrix, cmap='viridis')
-    ax.set_xticklabels([''] + inWords, rotation=90)
-    ax.set_yticklabels([''] + outWords)
-    ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-    ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
 
+    attentionMatrix = attentions.cpu().numpy()
+    inWords = input_sentence.split()
+    outWords = [w for w in output_words if w not in {SOS_token, EOS_token}]
+    n_target = len(outWords)
+    n_source = len(inWords)
+    
+    attentionMatrix = attentionMatrix[:n_target, :n_source]
+
+    cax = ax.matshow(attentionMatrix, cmap='viridis')
+    ax.set_xticks(range(n_source))
+    ax.set_yticks(range(n_target))
+    ax.set_xticklabels(inWords, rotation=90)
+    ax.set_yticklabels(outWords)
     ax.set_xlabel('Source Words')
     ax.set_ylabel('Target Words')
     ax.set_title('Attention Weights')
-    
     fig.colorbar(cax)
-    
+
     fig_name = f'attention_plot_{attention_plot_counter}.png'
-    plt.savefig(figurename, dpi=300, bbox_inches='tight')
+    plt.savefig(fig_name, dpi=300, bbox_inches='tight')
     plt.close(fig)
-    
+
     print(f'Attention plot saved as {fig_name}')
     attention_plot_counter += 1
 
@@ -502,15 +541,15 @@ def clean(strx):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--hidden_size', default=256, type=int,
+    ap.add_argument('--hidden_size', default=1024, type=int,
                     help='hidden size of encoder/decoder, also word vector size')
-    ap.add_argument('--n_iters', default=100000, type=int,
+    ap.add_argument('--n_iters', default=150000, type=int,
                     help='total number of examples to train on')
-    ap.add_argument('--print_every', default=5000, type=int,
+    ap.add_argument('--print_every', default=2000, type=int,
                     help='print loss info every this many training examples')
     ap.add_argument('--checkpoint_every', default=10000, type=int,
                     help='write out checkpoint every this many training examples')
-    ap.add_argument('--initial_learning_rate', default=0.001, type=float,
+    ap.add_argument('--initial_learning_rate', default=0.0003, type=float,
                     help='initial learning rate')
     ap.add_argument('--src_lang', default='fr',
                     help='Source (input) language code, e.g. "fr"')
@@ -532,6 +571,9 @@ def main():
                     help='checkpoint file to start from')
 
     args = ap.parse_args()
+    
+    random.seed(42)
+    torch.manual_seed(42)
 
     # process the training, dev, test files
 
@@ -564,24 +606,32 @@ def main():
 
     # set up optimization/loss
     params = list(encoder.parameters()) + list(decoder.parameters())  # .parameters() returns generator
-    optimizer = optim.Adam(params, lr=args.initial_learning_rate)
-    criterion = nn.NLLLoss()
+    optimizer = optim.AdamW(params, lr=args.initial_learning_rate, weight_decay=1e-4)
+    scheduler = StepLR(optimizer, step_size=5000, gamma=0.85)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.15)
 
     # optimizer may have state
     # if checkpointed, load saved state
     if args.load_checkpoint is not None:
         optimizer.load_state_dict(state['opt_state'])
 
+    tf_start = 0.95
+    tf_end = 0.5
+    tf_decay_iters = args.n_iters * 0.9
+
     start = time.time()
     print_loss_total = 0  # Reset every args.print_every
 
     while iter_num < args.n_iters:
         iter_num += 1
+        progress = min(iter_num / tf_decay_iters, 1.0)
+        tf_ratio = tf_start - progress * (tf_start - tf_end)
+
         training_pair = tensors_from_pair(src_vocab, tgt_vocab, random.choice(train_pairs))
         input_tensor = training_pair[0]
         target_tensor = training_pair[1]
         loss = train(input_tensor, target_tensor, encoder,
-                     decoder, optimizer, criterion)
+                     decoder, optimizer, criterion, tf_ratio)
         print_loss_total += loss
 
         if iter_num % args.checkpoint_every == 0:
@@ -612,6 +662,9 @@ def main():
             candidates = [clean(sent).split() for sent in translated_sentences]
             dev_bleu = corpus_bleu(references, candidates)
             logging.info('Dev BLEU score: %.2f', dev_bleu)
+            
+        if iter_num % args.print_every == 0:
+            scheduler.step()
 
     # translate test set and write to file
     translated_sentences = translate_sentences(encoder, decoder, test_pairs, src_vocab, tgt_vocab)
