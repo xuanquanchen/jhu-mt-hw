@@ -47,6 +47,7 @@ EOS_token = "<EOS>"
 SOS_index = 0
 EOS_index = 1
 MAX_LENGTH = 15
+attention_plot_counter = 1
 
 
 class Vocab:
@@ -454,12 +455,13 @@ def show_attention(input_sentence, output_words, attentions):
     """
     
     "*** YOUR CODE HERE ***"
+    global attention_plot_counter
     fig = plt.figure(figsize=(12, 8))
     ax = fig.add_subplot(111)
     attentionMatrix = attentions.numpy()
     inWords = input_sentence.split()
     outWords = [word for word in output_words if word not in {SOS_token, EOS_token}]
-    ax.matshow(attentionMatrix, cmap='viridis')
+    cax = ax.matshow(attentionMatrix, cmap='viridis')
     ax.set_xticklabels([''] + inWords, rotation=90)
     ax.set_yticklabels([''] + outWords)
     ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
@@ -468,12 +470,19 @@ def show_attention(input_sentence, output_words, attentions):
     ax.set_xlabel('Source Words')
     ax.set_ylabel('Target Words')
     ax.set_title('Attention Weights')
-
-    plt.savefig('attentionPlot.png', dpi=300, bbox_inches='tight')
-    plt.show()
+    
+    fig.colorbar(cax)
+    
+    fig_name = f'attention_plot_{attention_plot_counter}.png'
+    plt.savefig(figurename, dpi=300, bbox_inches='tight')
+    plt.close(fig)
+    
+    print(f'Attention plot saved as {fig_name}')
+    attention_plot_counter += 1
 
 
 def translate_and_show_attention(input_sentence, encoder1, decoder1, src_vocab, tgt_vocab):
+    global attention_plot_counter
     output_words, attentions = translate(
         encoder1, decoder1, input_sentence, src_vocab, tgt_vocab)
     print('input =', input_sentence)
