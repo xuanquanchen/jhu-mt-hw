@@ -144,13 +144,13 @@ class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers=2, bidirectional=True):
         super(EncoderRNN, self).__init__()
         self.hidden_size = hidden_size
+        self.bidirectional = bidirectional
         """Initilize a word embedding and bi-directional LSTM encoder
         For this assignment, you should *NOT* use nn.LSTM. 
         Instead, you should implement the equations yourself.
         See, for example, https://en.wikipedia.org/wiki/Long_short-term_memory#LSTM_with_a_forget_gate
         [DONE] You should make your LSTM modular and re-use it in the Decoder.
         """
-        "*** YOUR CODE HERE ***"
         # initialize word embedding layer
         self.embedding = nn.Embedding(input_size, hidden_size)
         # initialize bidirectional LSTM layer
@@ -160,13 +160,16 @@ class EncoderRNN(nn.Module):
             bidirectional=bidirectional,
             batch_first=True,
         )
-        # initialize linear layer
+        
+        if bidirectional:
+            self.reduce = nn.Linear(hidden_size * 2, hidden_size)
+        else:
+            self.reduce = nn.Identity()
 
     def forward(self, input_batch, lengths=None):
         """runs the forward pass of the encoder
         returns the output and the hidden state
         """
-        "*** YOUR CODE HERE ***"
         if lengths is None:
             if input_batch.dim() == 1:
                 input_batch = input_batch.unsqueeze(0)  # [1, seq_len]
@@ -179,6 +182,8 @@ class EncoderRNN(nn.Module):
         packed = pack_padded_sequence(embedded, lengths.cpu(), batch_first=True, enforce_sorted=False)
         outputs, (hidden, cell) = self.lstm(packed)
         outputs, _ = pad_packed_sequence(outputs, batch_first=True)
+        
+        outputs = self.reduce(outputs)
         
         return outputs, (hidden, cell)
 
@@ -202,6 +207,12 @@ class AttnDecoderRNN(nn.Module):
         self.embedding = nn.Embedding(output_size, hidden_size)
         self.lstm = nn.LSTM(hidden_size, hidden_size, batch_first=True)
         self.out = nn.Linear(hidden_size, output_size)
+        
+        self.attn = nn.Linear(hidden_size * 2, hidden_size)
+        self.v = nn.Linear(hidden_size, 1, bias=False)
+        
+        self.attn_combine = nn.Linear(hidden_size * 2, hidden_size)
+        self.out = nn.Linear(hidden_size, output_size)
 
     def forward(self, input_step, hidden, encoder_outputs):
         """runs the forward pass of the decoder
@@ -212,11 +223,26 @@ class AttnDecoderRNN(nn.Module):
         
         "*** YOUR CODE HERE ***"
         # fix translate bug when hidden is a tensor
-        embedded = self.embedding(input_step)
-        output, hidden = self.lstm(embedded, hidden)
-        output = self.out(output.squeeze(1))
+        h,c = hidden
+        emb = self.dropout(self.embedding(input_step))
         
-        return output, hidden, None
+        h_t = h[-1].unsqueeze(1) 
+        
+        # attention
+        repeat_h = h_t.expand(-1, encoder_outputs.size(1), -1)
+        energy = torch.tanh(self.attn(torch.cat((repeat_h, encoder_outputs), dim=2)))
+        attn_scores = self.v(energy).squeeze(2)        # [batch,src_len]
+        attn_weights = F.softmax(attn_scores, dim=1)   # [batch,src_len]
+        
+        context = torch.bmm(attn_weights.unsqueeze(1), encoder_outputs)
+        rnn_input = torch.cat((emb, context), dim=2)
+        
+        rnn_input = self.attn_combine(rnn_input)
+        rnn_input = torch.tanh(rnn_input)
+        
+        output, hidden = self.lstm(rnn_input, hidden)
+        output = self.out(output.squeeze(1))
+        return output, hidden, attn_weights
     
     def get_initial_hidden_state(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
@@ -281,21 +307,17 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
     encoder.eval()
     decoder.eval()
     beam_size = 10
+    
     with torch.no_grad():
-        input_tensor = tensor_from_sentence(src_vocab, sentence)
-        input_length = input_tensor.size()[0]
-        encoder_hidden = encoder.get_initial_hidden_state()
+        input_tensor = tensor_from_sentence(src_vocab, sentence).unsqueeze(0)
+        input_length = torch.tensor([input_tensor.size(1)], device=device)
+        
+        encoder_outputs, encoder_hidden = encoder(input_tensor, input_length)
+        encoder_outputs = encoder_outputs  # [1, seq_len, H]
 
-        encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
-
-        for ei in range(input_length):
-            encoder_output, encoder_hidden = encoder(input_tensor[ei],
-                                                     encoder_hidden)
-            encoder_outputs[ei] += encoder_output[0, 0]
-
-        decoder_input = torch.tensor([[SOS_index]], device=device)
+        decoder_input = torch.full((1, 1), SOS_index, dtype=torch.long, device=device)
         decoder_hidden = encoder_hidden
-        beams = [(0.0, [SOS_index], decoder_hidden, torch.zeros(max_length, max_length, device=device))]
+        beams = [(0.0, [SOS_index], decoder_hidden, torch.zeros(max_length, input_length.item(), device=device))]
 
         completed = []
         
@@ -305,6 +327,7 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
                 if seq[-1] == EOS_index:
                     completed.append((log_prob, seq, attn_history))
                     continue
+            
                 decoder_input = torch.tensor([[seq[-1]]], device=device)
                 decoder_output, decoder_hidden, decoder_attention = decoder(
                     decoder_input, hidden, encoder_outputs)
@@ -328,7 +351,7 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
                     
             beams = sorted(new_beams, key=lambda x: x[0], reverse=True)[:beam_size]
 
-        if len(completed) == 0:
+        if not completed:
             completed = beams
 
         best = max(completed, key=lambda x: x[0])
@@ -375,21 +398,20 @@ def show_attention(input_sentence, output_words, attentions):
     You plots should include axis labels and a legend.
     you may want to use matplotlib.
     """
-    
-    "*** YOUR CODE HERE ***"
     global attention_plot_counter
     fig = plt.figure(figsize=(12, 8))
     ax = fig.add_subplot(111)
 
-    attentionMatrix = attentions.cpu().numpy()
+    attn = attentions.cpu().numpy()
     inWords = input_sentence.split()
     outWords = [w for w in output_words if w not in {SOS_token, EOS_token}]
+    
     n_target = len(outWords)
     n_source = len(inWords)
     
-    attentionMatrix = attentionMatrix[:n_target, :n_source]
+    attn = attn[:n_target, :n_source]
 
-    cax = ax.matshow(attentionMatrix, cmap='viridis')
+    cax = ax.matshow(attn, cmap='viridis')
     ax.set_xticks(range(n_source))
     ax.set_yticks(range(n_target))
     ax.set_xticklabels(inWords, rotation=90)
