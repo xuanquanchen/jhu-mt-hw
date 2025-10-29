@@ -12,7 +12,6 @@ Students *MAY NOT* view the above tutorial or use it as a reference in any way.
 from __future__ import unicode_literals, print_function, division
 
 import argparse
-import imp
 import logging
 import random
 from torch.optim.lr_scheduler import StepLR
@@ -200,6 +199,7 @@ class AttnDecoderRNN(nn.Module):
         super(AttnDecoderRNN, self).__init__()
         self.hidden_size = hidden_size
         self.output_size = output_size
+        self.dropout = nn.Dropout(dropout_p)
         
         """Initilize your word embedding, decoder LSTM, and weights needed for your attention here
         """
@@ -273,11 +273,27 @@ def train_epoch(encoder, decoder, pairs, src_vocab, tgt_vocab, optimizer, criter
         optimizer.zero_grad()
 
         encoder_outputs, encoder_hidden = encoder(src_batch, src_lens)
-        decoder_input = torch.full((src_batch.size(0), 1), SOS_index, device=device, dtype=torch.long)
-        decoder_hidden = encoder_hidden
+        h, c = encoder_hidden
+
+        if getattr(encoder, "bidirectional", False):
+            num_layers = encoder.lstm.num_layers
+            num_directions = 2
+            h = h.view(num_layers, num_directions, h.size(1), h.size(2))
+            c = c.view(num_layers, num_directions, c.size(1), c.size(2))
+
+            h_cat = torch.cat((h[-1, 0], h[-1, 1]), dim=1).unsqueeze(0)
+            c_cat = torch.cat((c[-1, 0], c[-1, 1]), dim=1).unsqueeze(0)
+
+            h = encoder.reduce(h_cat)
+            c = encoder.reduce(c_cat)
+        else:
+            h = h[-1:].contiguous()
+            c = c[-1:].contiguous()
 
         max_tgt_len = tgt_batch.size(1)
         loss = 0
+        decoder_input = torch.full((src_batch.size(0), 1), SOS_index, dtype=torch.long, device=device)
+        decoder_hidden = (h, c) # Initialize decoder_hidden here
         for t in range(max_tgt_len):
             decoder_output, decoder_hidden, _ = decoder(
                 decoder_input, decoder_hidden, encoder_outputs)
@@ -315,8 +331,26 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
         encoder_outputs, encoder_hidden = encoder(input_tensor, input_length)
         encoder_outputs = encoder_outputs  # [1, seq_len, H]
 
+        h, c = encoder_hidden
+        if getattr(encoder, "bidirectional", False):
+            num_layers = encoder.lstm.num_layers
+            num_directions = 2
+            h = h.view(num_layers, num_directions, h.size(1), h.size(2))
+            c = c.view(num_layers, num_directions, c.size(1), c.size(2))
+
+            h_cat = torch.cat((h[-1, 0], h[-1, 1]), dim=1).unsqueeze(0)
+            c_cat = torch.cat((c[-1, 0], c[-1, 1]), dim=1).unsqueeze(0)
+
+            h = encoder.reduce(h_cat)
+            c = encoder.reduce(c_cat)
+        else:
+            h = h[-1:].contiguous()
+            c = c[-1:].contiguous()
+
+        decoder_hidden = (h, c)
         decoder_input = torch.full((1, 1), SOS_index, dtype=torch.long, device=device)
-        decoder_hidden = encoder_hidden
+
+        
         beams = [(0.0, [SOS_index], decoder_hidden, torch.zeros(max_length, input_length.item(), device=device))]
 
         completed = []
@@ -344,6 +378,8 @@ def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_L
                     new_attn = attn_history.clone()
 
                     if decoder_attention is not None:
+                        if decoder_attention.dim() == 2:
+                            decoder_attention = decoder_attention.squeeze(0)
                         attn_len = min(new_attn.size(1), decoder_attention.size(0))
                         new_attn[len(seq)-1, :attn_len] = decoder_attention[:attn_len]
                     
@@ -478,6 +514,9 @@ def main():
                     help='output file for test translations_beamsearch')
     ap.add_argument('--load_checkpoint', nargs=1,
                     help='checkpoint file to start from')
+    ap.add_argument('--num_epochs', default=10, type=int,
+                    help='number of training epochs (default: 10)')
+
 
     args = ap.parse_args()
     
@@ -531,9 +570,10 @@ def main():
     start = time.time()
     print_loss_total = 0  # Reset every args.print_every
 
-    num_epochs = 1
+    num_epochs = args.num_epochs
     batch_size = 32
-
+    best_bleu = 0
+    
     for epoch in range(num_epochs):
         avg_loss = train_epoch(
             encoder, decoder, train_pairs,
@@ -541,20 +581,33 @@ def main():
             optimizer, criterion,
             batch_size, tf_ratio=0.9
         )
-        print(f"[Epoch {epoch+1}] Avg loss: {avg_loss:.4f}")
+        print(f"[Epoch {epoch+1}/{num_epochs}] Avg loss: {avg_loss:.4f}")
         scheduler.step()
+        
+        dev_translations = translate_sentences(
+            encoder, decoder, dev_pairs, src_vocab, tgt_vocab, max_num_sentences=200
+        )
+        references = [[clean(pair[1]).split()] for pair in dev_pairs[:200]]
+        hypotheses = [sent.split() for sent in dev_translations]
+        bleu = corpus_bleu(references, hypotheses)
+        print(f"[Epoch {epoch+1}] Dev BLEU = {bleu:.4f}")
 
-    state = {
-        'epoch': epoch,
-        'enc_state': encoder.state_dict(),
-        'dec_state': decoder.state_dict(),
-        'opt_state': optimizer.state_dict(),
-        'src_vocab': src_vocab,
-        'tgt_vocab': tgt_vocab,
-    }
-    filename = f'state_epoch_{epoch+1:03d}.pt'
-    torch.save(state, filename)
-    logging.debug(f'wrote checkpoint to {filename}')
+        state = {
+            'epoch': epoch,
+            'enc_state': encoder.state_dict(),
+            'dec_state': decoder.state_dict(),
+            'opt_state': optimizer.state_dict(),
+            'src_vocab': src_vocab,
+            'tgt_vocab': tgt_vocab,
+        }
+        filename = f'state_epoch_{epoch+1:03d}.pt'
+        torch.save(state, filename)
+        logging.debug(f'wrote checkpoint to {filename}')
+        
+        if bleu > best_bleu:
+            best_bleu = bleu
+            torch.save(state, 'best_model.pt')
+            print(f"New best model saved with BLEU {bleu:.4f}")
 
     # translate test set and write to file
     translated_sentences = translate_sentences(encoder, decoder, test_pairs, src_vocab, tgt_vocab)
