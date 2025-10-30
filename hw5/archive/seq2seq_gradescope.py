@@ -7,12 +7,7 @@ import argparse
 import logging
 import random
 from torch.optim.lr_scheduler import StepLR
-import time
 from io import open
-
-import matplotlib
-import math
-import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,7 +21,7 @@ logging.basicConfig(level=logging.DEBUG,
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # print('using device:', device)
 
-if torch.backends.mps.is_available():
+if torch.backends.mps.is_available(): # for mac use mps instead of cpu
     device = torch.device("mps")
 elif torch.cuda.is_available():
     device = torch.device("cuda")
@@ -152,7 +147,7 @@ class AttnDecoderRNN(nn.Module):
         return output, hidden, attn_weights
 
 
-def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_LENGTH, beam_size=10, length_penalty_alpha=0.6):
+def translate(encoder, decoder, sentence, src_vocab, tgt_vocab, max_length=MAX_LENGTH, beam_size=5, length_penalty_alpha=0.6):
     encoder.eval(); decoder.eval()
     with torch.no_grad():
         input_tensor = tensor_from_sentence(src_vocab, sentence).unsqueeze(0)
@@ -226,44 +221,6 @@ def translate_sentences(encoder, decoder, pairs, src_vocab, tgt_vocab, max_num_s
 
 def clean(strx):
     return ' '.join(strx.replace('@@ ', '').replace(EOS_token, '').strip().split())
-
-
-# Attention visualization utilities (ported from part1)
-def show_attention(input_sentence, output_words, attentions):
-    global attention_plot_counter
-    fig = plt.figure(figsize=(12, 8))
-    ax = fig.add_subplot(111)
-
-    attn = attentions.detach().cpu().numpy()
-    inWords = input_sentence.split()
-    outWords = [w for w in output_words if w not in {SOS_token, EOS_token}]
-
-    n_target = len(outWords)
-    n_source = len(inWords)
-    attn = attn[:n_target, :n_source]
-
-    cax = ax.matshow(attn, cmap='viridis')
-    ax.set_xticks(range(n_source))
-    ax.set_yticks(range(n_target))
-    ax.set_xticklabels(inWords, rotation=90)
-    ax.set_yticklabels(outWords)
-    ax.set_xlabel('Source Words')
-    ax.set_ylabel('Target Words')
-    ax.set_title('Attention Weights')
-    fig.colorbar(cax)
-
-    fig_name = f'attention_plot_{attention_plot_counter}.png'
-    plt.savefig(fig_name, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f'Attention plot saved as {fig_name}')
-    attention_plot_counter += 1
-
-
-def translate_and_show_attention(input_sentence, encoder1, decoder1, src_vocab, tgt_vocab):
-    output_words, attentions = translate(encoder1, decoder1, input_sentence, src_vocab, tgt_vocab)
-    print('input =', input_sentence)
-    print('output =', ' '.join(output_words))
-    show_attention(input_sentence, output_words, attentions)
 
 
 def main():
@@ -377,19 +334,13 @@ def main():
         torch.save(state, f'state_epoch_{epoch + 1:03d}.pt')
         if bleu > best_bleu:
             best_bleu = bleu
-            torch.save(state, '../hw5/best_model.pt')
+            torch.save(state, 'best_model.pt')
             print(f"New best model saved with BLEU {bleu:.4f}")
 
     translated_sentences = translate_sentences(encoder, decoder, test_pairs, src_vocab, tgt_vocab, beam_size=args.beam_size, length_penalty_alpha=args.length_penalty)
     with open(args.out_file, 'wt', encoding='utf-8') as outf:
         for sent in translated_sentences:
             outf.write(clean(sent) + '\n')
-
-    # Generate a few attention plots (same examples as part1)
-    translate_and_show_attention("on p@@ eu@@ t me faire confiance .", encoder, decoder, src_vocab, tgt_vocab)
-    translate_and_show_attention("j en suis contente .", encoder, decoder, src_vocab, tgt_vocab)
-    translate_and_show_attention("vous etes tres genti@@ ls .", encoder, decoder, src_vocab, tgt_vocab)
-    translate_and_show_attention("c est mon hero@@ s ", encoder, decoder, src_vocab, tgt_vocab)
 
 
 if __name__ == '__main__':
