@@ -8,5 +8,3 @@
 
 - `translations`:
     - epoch 10, batchsize 32, hidden size 1024, beam size 10
-
-### `seqseq_part2_cae`:
