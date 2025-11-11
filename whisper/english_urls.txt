@@ -1,0 +1,18 @@
+# English YouTube URLs for audio download
+# Add your own URLs here (one per line)
+# Examples:
+# 1. https://www.youtube.com/watch?v=8S0FDjFBj8o
+# 2. https://www.youtube.com/watch?v=UF8uR6Z6KLc
+# 3. https://www.youtube.com/watch?v=Z7dLU6fk9QY
+# 4. https://www.youtube.com/watch?v=u6XAPnuFjJc
+# 5. https://www.youtube.com/watch?v=9bZkp7q19f0
+# 6. https://www.youtube.com/watch?v=Z7dLU6fk9QY
+# 7. https://www.youtube.com/watch?v=UF8uR6Z6KLc
+# 8. https://www.youtube.com/watch?v=8S0FDjFBj8o
+# 9. https://www.youtube.com/watch?v=Z7dLU6fk9QY
+# 10. https://www.youtube.com/watch?v=UF8uR6Z6KLc
+
+# Add more URLs below:
+# https://www.youtube.com/watch?v=EXAMPLE1
+# https://www.youtube.com/watch?v=EXAMPLE2
+# ... continue for 50 total
