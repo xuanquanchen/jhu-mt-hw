@@ -36,6 +36,8 @@ Example:
 ```
 
 Supported punctuation marks:
+
+**Standard Set (train.py, train_v1.py, train_v2.py):**
 - `O` - No punctuation
 - `，` - Comma
 - `。` - Period
@@ -44,33 +46,91 @@ Supported punctuation marks:
 - `；` - Semicolon
 - `、` - Enumeration comma
 
+**Expanded Set (train_v3.py):**
+- All standard marks above, plus:
+- `《` - Left book title mark
+- `》` - Right book title mark
+
 ## Installation
 
 ```bash
+# Core dependencies
 pip install torch transformers numpy scikit-learn tqdm pandas
+
+# For downloading IWSLT data (optional)
+pip install datasets
 ```
 
 ## Usage
 
 ### 1. Prepare Data
 
+#### Option A: Use Existing Data
 Place your data files in the `data/` directory:
 - `data/train` - Training data
 - `data/valid` - Validation data
 - `data/test` - Test data
 
-### 2. Train Model
+#### Option B: Download IWSLT Data
+Download additional Chinese data from IWSLT:
 
 ```bash
+# Install datasets library
+pip install datasets
+
+# Download IWSLT Chinese data
+python download_iwslt_data.py
+
+# Or download with limited examples (for testing)
+python download_iwslt_data.py --max-examples 100
+
+# Merge with existing data
+python download_iwslt_data.py --merge
+```
+
+See `DOWNLOAD_DATA.md` for detailed instructions.
+
+### 2. Train Model
+
+#### Available Training Scripts
+
+**`train.py`** - Original full training script (15 epochs, full dataset)
+
+**`train_v1.py`** - Quick test version
+- 1 epoch only
+- Limited to first 99,998 training lines
+- No class weights (baseline)
+
+**`train_v2.py`** - With class weights
+- 1 epoch only
+- Limited to first 99,998 training lines
+- **Computes class weights from data** to handle imbalanced classes
+- Better for learning punctuation marks
+
+**`train_v3.py`** - Class weights + validation cap ⭐ **Recommended for testing**
+- 1 epoch only
+- Limited to first 99,998 training lines
+- **Limited to first 20,000 validation lines** (faster validation)
+- **Computes class weights from data** to handle imbalanced classes
+- Faster overall training/validation cycle
+
+```bash
+# Use V3 for faster testing (with validation cap)
+python train_v3.py
+
+# Or use V2 for standard training with class weights
+python train_v2.py
+
+# Or use original for full training
 python train.py
 ```
 
-The script will:
+The scripts will:
 - Load and preprocess data
 - Initialize the model
-- Train for 15 epochs
-- Save the best model to `outputs/model_YYYYMMDD_HHMMSS/model`
-- Save training progress to `outputs/model_YYYYMMDD_HHMMSS/progress.csv`
+- Train for specified epochs
+- Save the best model to `outputs/model_vX_YYYYMMDD_HHMMSS/model`
+- Save training progress to `outputs/model_vX_YYYYMMDD_HHMMSS/progress.csv`
 
 ### 3. Test Model
 

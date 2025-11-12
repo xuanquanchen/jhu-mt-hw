@@ -118,7 +118,8 @@ class BertChineseEmbSlimCNNlstmBert(nn.Module):
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
         
-        extended_attention_mask = self.bert.get_extended_attention_mask(attention_mask, input_shape, device)
+        # device argument is deprecated in newer transformers - it auto-detects from tensors
+        extended_attention_mask = self.bert.get_extended_attention_mask(attention_mask, input_shape)
         
         if self.bert.config.is_decoder and encoder_hidden_states is not None:
             encoder_batch_size, encoder_sequence_length, _ = encoder_hidden_states.size()

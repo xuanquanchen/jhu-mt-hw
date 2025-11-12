@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Test/Evaluation script for BertChineseEmbSlimCNNlstmBert model
+——————————————————————————————————————————————————————————————————
+Zihan Lyu
+Nov 12, 2025
+Paste the following into terminal:
+python test.py --model_path outputs/model_v3_20251112_003011/model --hyperparameters outputs/model_v3_20251112_003011/hyperparameters.json --test_data data/test --output results_v3_20251112_003011.csv
 """
 
 import os
@@ -31,9 +36,9 @@ PUNCTUATION_ENC = {
     '，': 1,  # COMMA
     '。': 2,  # PERIOD
     '？': 3,  # QUESTION
-    '！': 4,  # EXCLAMATION
-    '；': 5,  # SEMICOLON
-    '、': 6,  # ENUMERATION
+    # '！': 4,  # EXCLAMATION
+    # '；': 5,  # SEMICOLON
+    # '、': 6,  # ENUMERATION
 }
 
 # Reverse mapping for decoding
@@ -153,6 +158,8 @@ if __name__ == '__main__':
                        help='Path to save results (optional)')
     parser.add_argument('--batch_size', type=int, default=32,
                        help='Batch size for evaluation')
+    parser.add_argument('--max_test_lines', type=int, default=None,
+                        help='Maximum number of test lines to evaluate (None for all)')
     
     args = parser.parse_args()
     
@@ -175,6 +182,15 @@ if __name__ == '__main__':
     print("\nLoading tokenizer...")
     tokenizer = BertTokenizer.from_pretrained('hfl/chinese-roberta-wwm-ext', do_lower_case=True)
     print("✓ Tokenizer loaded")
+
+    if args.max_test_lines:
+        from data_utils import load_file_limited
+
+        data_test = load_file_limited(args.test_data, max_lines=args.max_test_lines)
+        print(f"Test samples: {len(data_test)} (limited to {args.max_test_lines:,} lines)")
+    else:
+        data_test = load_file(args.test_data)
+        print(f"Test samples: {len(data_test)}")
     
     # Load and preprocess test data
     print(f"\nLoading test data from {args.test_data}...")
