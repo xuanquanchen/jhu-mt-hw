@@ -1,0 +1,92 @@
+================================================================================
+基线模型训练 (10 epochs)
+开始时间: 2025-12-01 00:31:34
+命令: .venv/bin/python train_baseline.py --epochs 10 --batch-size 40 --lr 1e-5 --use-amp
+================================================================================
+
+Using device: cpu
+============================================================
+Chinese Punctuation Restoration - Baseline Model Training
+============================================================
+Model: BertChineseEmbSlimCNNlstmBert (Baseline)
+Output directory: outputs/model_baseline_20251201_003139
+Device: cpu
+Use Mixed Precision (AMP): False
+Epochs: 10
+Batch Size: 40
+Learning Rate: 1e-05
+Max training lines: 150000
+Max validation lines: 50000
+============================================================
+
+Loading data...
+Train samples: 150,000
+Valid samples: 50,000
+
+Computing class weights from training data...
+
+============================================================
+Class Distribution in Training Data:
+============================================================
+  O   (class 0):  138,066 (92.04%)
+  ，   (class 1):    5,538 ( 3.69%)
+  。   (class 2):    5,955 ( 3.97%)
+  ？   (class 3):      441 ( 0.29%)
+  Total: 150,000 lines
+============================================================
+
+Computed Class Weights (normalized so 'O' = 1.0):
+============================================================
+  O   (class 0):   1.0000
+  ，   (class 1):  24.9307
+  。   (class 2):  23.1849
+  ？   (class 3): 313.0748
+============================================================
+
+Loading tokenizer...
+✓ Tokenizer loaded
+
+Preprocessing data...
+Train sequences: 750
+Valid sequences: 250
+
+Initializing model...
+Total parameters: 260,032,516
+Trainable parameters: 260,032,516
+
+✓ Using weighted CrossEntropyLoss
+
+============================================================
+Starting training...
+============================================================
+
+Epoch 1/10:   0%|          | 0/19 [00:00<?, ?it/s]
+Epoch 1/10:   5%|▌         | 1/19 [01:02<18:37, 62.10s/it]
+Epoch 1/10:  11%|█         | 2/19 [01:55<16:08, 56.98s/it]
+Epoch 1/10:  16%|█▌        | 3/19 [02:56<15:44, 59.01s/it]
+Epoch 1/10:  21%|██        | 4/19 [03:42<13:26, 53.75s/it]
+Epoch 1/10:  26%|██▋       | 5/19 [04:28<11:52, 50.91s/it]
+Epoch 1/10:  32%|███▏      | 6/19 [05:21<11:11, 51.64s/it]
+
+Validating:   0%|          | 0/7 [00:00<?, ?it/s][A
+
+Validating:  14%|█▍        | 1/7 [00:06<00:36,  6.03s/it][A
+
+Validating:  29%|██▊       | 2/7 [00:12<00:30,  6.13s/it][A
+
+Validating:  43%|████▎     | 3/7 [00:18<00:25,  6.26s/it][A
+
+Validating:  57%|█████▋    | 4/7 [00:24<00:18,  6.26s/it][A
+
+Validating:  71%|███████▏  | 5/7 [00:31<00:12,  6.23s/it][A
+
+Validating:  86%|████████▌ | 6/7 [00:38<00:06,  6.77s/it][A
+
+Validating: 100%|██████████| 7/7 [00:43<00:00,  6.00s/it][A
+Validating: 100%|██████████| 7/7 [00:43<00:00,  6.19s/it]
+
+Epoch 1/10:  37%|███▋      | 7/19 [06:58<13:17, 66.45s/it]
+Epoch 1/10:  42%|████▏     | 8/19 [08:19<13:00, 70.99s/it]
+Epoch 1/10:  47%|████▋     | 9/19 [09:16<11:06, 66.70s/it]
+Epoch 1/10:  53%|█████▎    | 10/19 [10:07<09:17, 61.92s/it]
+Epoch 1/10:  58%|█████▊    | 11/19 [11:04<08:02, 60.29s/it]
