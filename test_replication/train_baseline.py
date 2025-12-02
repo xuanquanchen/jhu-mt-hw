@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Training script for baseline model (original BertChineseEmbSlimCNNlstmBert)
+Training script for baseline model (BertPunc from Bert-CNN-RNN)
+Original BertPunc model adapted for Chinese punctuation restoration
 With mixed precision training support
 """
 
@@ -25,7 +26,7 @@ from sklearn.exceptions import UndefinedMetricWarning
 import warnings
 warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
-from model import BertChineseEmbSlimCNNlstmBert
+from model_baseline import BertPunc
 from data_utils import load_file, preprocess_data, create_data_loader
 
 # Configuration
@@ -33,13 +34,13 @@ CUDA = torch.cuda.is_available()
 device = torch.device("cuda" if CUDA else "cpu")
 print(f"Using device: {device}")
 
-# Hyperparameters
+# Hyperparameters (matching adapter model)
 SEED = 20
 SEQ_LEN = 200
-DROPOUT = 0.1
-EPOCHS = 10
+DROPOUT = 0.3
+EPOCHS = 10  # Match adapter model
 BATCH_SIZE = 40
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 5e-5  # Match adapter model
 ITERATIONS = 3
 MAX_TRAIN_LINES = 150000
 MAX_VALID_LINES = 50000
@@ -285,13 +286,13 @@ def train(model, optimizer, criterion, data_loader_train, data_loader_valid,
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Train baseline model')
-    parser.add_argument('--epochs', type=int, default=10,
-                        help='Number of epochs (default: 10)')
+    parser = argparse.ArgumentParser(description='Train baseline model (BertPunc)')
+    parser.add_argument('--epochs', type=int, default=15,
+                        help='Number of epochs (default: 15, matching adapter model)')
     parser.add_argument('--batch-size', type=int, default=40,
                         help='Batch size (default: 40)')
-    parser.add_argument('--lr', type=float, default=1e-5,
-                        help='Learning rate (default: 1e-5)')
+    parser.add_argument('--lr', type=float, default=5e-5,
+                        help='Learning rate (default: 5e-5, matching adapter model)')
     parser.add_argument('--use-amp', action='store_true', default=True,
                         help='Use mixed precision training (default: True)')
     parser.add_argument('--no-amp', dest='use_amp', action='store_false',
@@ -310,7 +311,7 @@ def main():
     print("=" * 60)
     print("Chinese Punctuation Restoration - Baseline Model Training")
     print("=" * 60)
-    print(f"Model: BertChineseEmbSlimCNNlstmBert (Baseline)")
+    print(f"Model: BertPunc (Baseline from Bert-CNN-RNN)")
     print(f"Output directory: {save_path}")
     print(f"Device: {device}")
     print(f"Use Mixed Precision (AMP): {args.use_amp and CUDA}")
@@ -333,9 +334,9 @@ def main():
     class_weights = compute_class_weights(data_train, PUNCTUATION_ENC)
     class_weights = class_weights.to(device)
     
-    # Load tokenizer
+    # Load tokenizer (BertPunc uses bert-base-chinese)
     print("\nLoading tokenizer...")
-    tokenizer = BertTokenizer.from_pretrained('hfl/chinese-roberta-wwm-ext', do_lower_case=True)
+    tokenizer = BertTokenizer.from_pretrained('bert-base-chinese', do_lower_case=True)
     print("✓ Tokenizer loaded")
     
     # Preprocess data
@@ -352,7 +353,7 @@ def main():
     # Initialize model
     print("\nInitializing model...")
     output_size = len(PUNCTUATION_ENC)
-    model = BertChineseEmbSlimCNNlstmBert(SEQ_LEN, output_size, DROPOUT, None)
+    model = BertPunc(SEQ_LEN, output_size, DROPOUT, None)
     model = model.to(device)
     
     # Count parameters
@@ -370,7 +371,8 @@ def main():
     
     # Save hyperparameters
     hyperparameters = {
-        'model_type': 'BertChineseEmbSlimCNNlstmBert',
+        'model_type': 'BertPunc',
+        'model_source': 'Bert-CNN-RNN (baseline/reference model)',
         'seq_len': SEQ_LEN,
         'dropout': DROPOUT,
         'epochs': args.epochs,
@@ -384,6 +386,7 @@ def main():
         'use_amp': args.use_amp and CUDA,
         'total_params': total_params,
         'trainable_params': trainable_params,
+        'tokenizer': 'bert-base-chinese',
     }
     with open(os.path.join(save_path, 'hyperparameters.json'), 'w', encoding='utf-8') as f:
         json.dump(hyperparameters, f, indent=2, ensure_ascii=False)

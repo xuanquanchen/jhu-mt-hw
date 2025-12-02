@@ -32,10 +32,10 @@ print(f"Using device: {device}")
 # Hyperparameters
 SEED = 20
 SEQ_LEN = 200
-DROPOUT = 0.1
-EPOCHS = 15
-BATCH_SIZE = 10
-LEARNING_RATE = 1e-5
+DROPOUT = 0.3
+EPOCHS = 5
+BATCH_SIZE = 40
+LEARNING_RATE = 5e-5
 ITERATIONS = 3  # Number of validation checks per epoch
 
 # Punctuation encoding (O + 6 Chinese punctuation marks)

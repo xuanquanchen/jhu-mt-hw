@@ -47,10 +47,10 @@ print(f"Using device: {device}")
 # Hyperparameters
 SEED = 20
 SEQ_LEN = 200
-DROPOUT = 0.1
-EPOCHS = 15  # Only 1 epoch for quick testing
+DROPOUT = 0.3
+EPOCHS = 10  # Only 1 epoch for quick testing
 BATCH_SIZE = 40
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 5e-5
 ITERATIONS = 3  # Number of validation checks per epoch
 MAX_TRAIN_LINES = 150000  # Limit training data to first 99,998 lines
 MAX_VALID_LINES = 50000  # Limit validation data to first 20,816 lines (for faster validation)

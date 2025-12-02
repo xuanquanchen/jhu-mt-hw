@@ -40,8 +40,8 @@ print(f"Using device: {device}")
 # Hyperparameters
 SEED = 20
 SEQ_LEN = 200
-DROPOUT = 0.1
-EPOCHS = 15
+DROPOUT = 0.3
+EPOCHS = 10
 BATCH_SIZE = 40
 LEARNING_RATE = 1e-4  # Higher LR for adapters (they're smaller)
 ITERATIONS = 3
