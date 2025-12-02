@@ -37,10 +37,10 @@ print(f"Using device: {device}")
 # Hyperparameters (matching adapter model)
 SEED = 20
 SEQ_LEN = 200
-DROPOUT = 0.3
-EPOCHS = 10  # Match adapter model
-BATCH_SIZE = 40
-LEARNING_RATE = 5e-5  # Match adapter model
+DROPOUT = 0.1
+EPOCHS = 7  # Match adapter model
+BATCH_SIZE = 80
+LEARNING_RATE = 2e-5  # Match adapter model
 ITERATIONS = 3
 MAX_TRAIN_LINES = 150000
 MAX_VALID_LINES = 50000
